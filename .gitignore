@@ -10,3 +10,4 @@ worker/dist/
 
 .vercel
 .env*
+!.env.example
