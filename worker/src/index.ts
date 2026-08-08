@@ -17,8 +17,18 @@ type Brief = {
 };
 type Run = { query: string; provider?: "fastcrw" | "firecrawl"; mode?: "live" | "demo"; note?: string; sources: Source[]; brief?: Brief; recordedAt?: string };
 type StoredRun = Omit<Run, "recordedAt"> & { recordedAt: string };
-type Garden = { slug: string; title: string; ownerId: string; visibility: Visibility; createdAt: string; latestRun?: StoredRun; history?: StoredRun[]; watchlist?: string[] };
-type GardenSummary = Pick<Garden, "slug" | "title" | "visibility" | "createdAt" | "watchlist"> & { latestRun?: Pick<StoredRun, "query" | "recordedAt"> };
+type Garden = {
+  slug: string;
+  title: string;
+  ownerId: string;
+  visibility: Visibility;
+  continuousResearchEnabled?: boolean;
+  createdAt: string;
+  latestRun?: StoredRun;
+  history?: StoredRun[];
+  watchlist?: string[];
+};
+type GardenSummary = Pick<Garden, "slug" | "title" | "visibility" | "continuousResearchEnabled" | "createdAt" | "watchlist"> & { latestRun?: Pick<StoredRun, "query" | "recordedAt"> };
 type Topic = { query: string; count: number; lastSeen: string };
 type Share = { id: string; run: StoredRun; createdAt: string };
 type GardenMemory = {
@@ -29,9 +39,17 @@ type GardenMemory = {
   hypotheses?: string[];
   openQuestions?: string[];
   lastSynthesizedAt?: string;
+  watchTopicCursor?: number;
   researchCount: number;
 };
-type ActiveGarden = { slug: string; ownerId: string; latestQuery?: string; lastRun?: string; watchlist?: string[] };
+type ActiveGarden = {
+  slug: string;
+  ownerId: string;
+  continuousResearchEnabled: boolean;
+  latestQuery?: string;
+  lastRun?: string;
+  watchlist?: string[];
+};
 
 interface Env { AGENT_WORKSPACE: DurableObjectNamespace; INTERNAL_TOKEN: string; }
 
@@ -50,7 +68,7 @@ async function readGarden(workspace: Awaited<ReturnType<typeof getWorkspace>>): 
 
 async function readMemory(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<GardenMemory> {
   try { return JSON.parse(await workspace.fs.readFile("/memory.json", "utf8")) as GardenMemory; }
-  catch { return { researchCount: 0 }; }
+  catch { return { researchCount: 0, watchTopicCursor: 0 }; }
 }
 
 async function readGardenIndex(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<GardenSummary[]> {
@@ -62,7 +80,15 @@ async function updateGardenIndex(env: Env, garden: Garden) {
   const id = env.AGENT_WORKSPACE.idFromName(`owner:${garden.ownerId}`);
   using workspace = await getWorkspace(env.AGENT_WORKSPACE.get(id) as WorkspaceHandle);
   const gardens = await readGardenIndex(workspace);
-  const summary: GardenSummary = { slug: garden.slug, title: garden.title, visibility: garden.visibility, createdAt: garden.createdAt, watchlist: garden.watchlist ?? [], latestRun: garden.latestRun ? { query: garden.latestRun.query, recordedAt: garden.latestRun.recordedAt } : undefined };
+  const summary: GardenSummary = {
+    slug: garden.slug,
+    title: garden.title,
+    visibility: garden.visibility,
+    continuousResearchEnabled: garden.continuousResearchEnabled === true,
+    createdAt: garden.createdAt,
+    watchlist: garden.watchlist ?? [],
+    latestRun: garden.latestRun ? { query: garden.latestRun.query, recordedAt: garden.latestRun.recordedAt } : undefined,
+  };
   const position = gardens.findIndex((entry) => entry.slug === garden.slug);
   if (position === -1) gardens.unshift(summary); else gardens[position] = summary;
   await workspace.fs.writeFile("/gardens.json", JSON.stringify(gardens));
@@ -80,6 +106,7 @@ async function updateActiveGardenIndex(env: Env, garden: Garden) {
   const active: ActiveGarden = {
     slug: garden.slug,
     ownerId: garden.ownerId,
+    continuousResearchEnabled: garden.continuousResearchEnabled === true,
     latestQuery: garden.latestRun?.query,
     lastRun: garden.latestRun?.recordedAt,
     watchlist: garden.watchlist ?? [],
@@ -88,6 +115,19 @@ async function updateActiveGardenIndex(env: Env, garden: Garden) {
   if (position === -1) gardens.push(active); else gardens[position] = active;
   gardens.sort((a, b) => (a.lastRun ?? "").localeCompare(b.lastRun ?? ""));
   await workspace.fs.writeFile("/active-gardens.json", JSON.stringify(gardens.slice(0, 1000)));
+}
+
+async function backfillOwnerActiveGardens(env: Env, ownerId: string, summaries: GardenSummary[]) {
+  let backfilled = 0;
+  for (const summary of summaries) {
+    const id = env.AGENT_WORKSPACE.idFromName(`garden:${summary.slug}`);
+    using workspace = await getWorkspace(env.AGENT_WORKSPACE.get(id) as WorkspaceHandle);
+    const garden = await readGarden(workspace);
+    if (!garden || garden.ownerId !== ownerId) continue;
+    await updateActiveGardenIndex(env, garden);
+    backfilled += 1;
+  }
+  return backfilled;
 }
 
 async function readTopics(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<Topic[]> {
@@ -116,6 +156,7 @@ function buildMemory(garden: Garden, previous: GardenMemory, run: StoredRun): Ga
     hypotheses: run.brief?.hypotheses?.slice(0, 12) ?? previous.hypotheses ?? [],
     openQuestions: run.brief?.nextQuestions?.slice(0, 12) ?? previous.openQuestions ?? [],
     lastSynthesizedAt: run.brief?.aiModel ? run.recordedAt : previous.lastSynthesizedAt,
+    watchTopicCursor: previous.watchTopicCursor ?? 0,
     researchCount: previous.researchCount + 1,
   };
 }
@@ -135,10 +176,12 @@ export default {
     if (request.method === "GET" && url.pathname === "/active-gardens") {
       if (request.headers.get("x-internal-token") !== env.INTERNAL_TOKEN) return unauthorized();
       const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? "1") || 1, 10));
+      const enabledOnly = url.searchParams.get("enabledOnly") === "1";
       const id = env.AGENT_WORKSPACE.idFromName("active-gardens");
       using workspace = await getWorkspace(env.AGENT_WORKSPACE.get(id) as WorkspaceHandle);
       const actionable = (await readActiveGardens(workspace)).filter((garden) => Boolean(garden.latestQuery || garden.watchlist?.length));
-      return Response.json({ gardens: actionable.slice(0, limit) });
+      const gardens = enabledOnly ? actionable.filter((garden) => garden.continuousResearchEnabled === true) : actionable;
+      return Response.json({ gardens: gardens.slice(0, limit) });
     }
 
     if (segments[0] === "shares") {
@@ -166,9 +209,12 @@ export default {
 
     if (segments[0] === "owners" && request.method === "GET" && segments.length === 3 && segments[2] === "gardens") {
       if (request.headers.get("x-internal-token") !== env.INTERNAL_TOKEN) return unauthorized();
-      const id = env.AGENT_WORKSPACE.idFromName(`owner:${segments[1]}`);
+      const ownerId = segments[1];
+      const id = env.AGENT_WORKSPACE.idFromName(`owner:${ownerId}`);
       using workspace = await getWorkspace(env.AGENT_WORKSPACE.get(id) as WorkspaceHandle);
-      return Response.json({ gardens: await readGardenIndex(workspace) });
+      const gardens = await readGardenIndex(workspace);
+      const backfilled = await backfillOwnerActiveGardens(env, ownerId, gardens);
+      return Response.json({ gardens, backfilled });
     }
 
     const slug = segments[1];
@@ -183,9 +229,18 @@ export default {
       const id = env.AGENT_WORKSPACE.idFromName(`garden:${input.slug}`);
       using workspace = await getWorkspace(env.AGENT_WORKSPACE.get(id) as WorkspaceHandle);
       if (await readGarden(workspace)) return Response.json({ error: "That garden URL is already taken." }, { status: 409 });
-      const garden: Garden = { slug: input.slug, title: input.title.slice(0, 80), ownerId: input.ownerId, visibility: input.visibility === "private" ? "private" : "public", createdAt: new Date().toISOString(), history: [], watchlist: [] };
+      const garden: Garden = {
+        slug: input.slug,
+        title: input.title.slice(0, 80),
+        ownerId: input.ownerId,
+        visibility: input.visibility === "private" ? "private" : "public",
+        continuousResearchEnabled: false,
+        createdAt: new Date().toISOString(),
+        history: [],
+        watchlist: [],
+      };
       await workspace.fs.writeFile("/garden.json", JSON.stringify(garden));
-      await workspace.fs.writeFile("/memory.json", JSON.stringify({ researchCount: 0 } satisfies GardenMemory));
+      await workspace.fs.writeFile("/memory.json", JSON.stringify({ researchCount: 0, watchTopicCursor: 0 } satisfies GardenMemory));
       await updateGardenIndex(env, garden);
       await updateActiveGardenIndex(env, garden);
       return Response.json(garden, { status: 201 });
@@ -204,15 +259,31 @@ export default {
 
     if (isContextRead) {
       return Response.json({
-        garden: { slug: garden.slug, title: garden.title, ownerId: garden.ownerId, visibility: garden.visibility, watchlist: garden.watchlist ?? [] },
+        garden: {
+          slug: garden.slug,
+          title: garden.title,
+          ownerId: garden.ownerId,
+          visibility: garden.visibility,
+          continuousResearchEnabled: garden.continuousResearchEnabled === true,
+          watchlist: garden.watchlist ?? [],
+        },
         memory: await readMemory(workspace),
       });
     }
 
     if (request.method === "PATCH" && segments.length === 2) {
-      const input = await request.json() as { ownerId?: string; visibility?: Visibility };
+      const input = await request.json() as { ownerId?: string; visibility?: Visibility; continuousResearchEnabled?: boolean };
       if (!input.ownerId || input.ownerId !== garden.ownerId) return Response.json({ error: "Forbidden" }, { status: 403 });
-      garden.visibility = input.visibility === "private" ? "private" : "public";
+      let changed = false;
+      if (input.visibility === "public" || input.visibility === "private") {
+        garden.visibility = input.visibility;
+        changed = true;
+      }
+      if (typeof input.continuousResearchEnabled === "boolean") {
+        garden.continuousResearchEnabled = input.continuousResearchEnabled;
+        changed = true;
+      }
+      if (!changed) return Response.json({ error: "No supported garden setting was provided." }, { status: 400 });
       await workspace.fs.writeFile("/garden.json", JSON.stringify(garden));
       await updateGardenIndex(env, garden);
       await updateActiveGardenIndex(env, garden);
@@ -220,8 +291,9 @@ export default {
     }
 
     if (request.method === "POST" && segments[2] === "runs" && segments.length === 3) {
-      const input = await request.json() as Run & { ownerId?: string };
+      const input = await request.json() as Run & { ownerId?: string; continuousResearch?: boolean };
       if (!input.ownerId || input.ownerId !== garden.ownerId || !input.query || !Array.isArray(input.sources)) return Response.json({ error: "Invalid run" }, { status: 400 });
+      if (input.continuousResearch && garden.continuousResearchEnabled !== true) return Response.json({ error: "Continuous research is not enabled for this garden." }, { status: 409 });
       const previousUrls = new Set(garden.latestRun?.sources.map((source) => source.url) ?? []);
       const newSources = input.sources.filter((source) => !previousUrls.has(source.url)).length;
       const run: StoredRun = { query: input.query.slice(0, 240), provider: input.provider, mode: input.mode, note: input.note, sources: input.sources.slice(0, 12), brief: input.brief ? { ...input.brief, newSources } : undefined, recordedAt: new Date().toISOString() };
@@ -241,7 +313,12 @@ export default {
       }));
       garden.latestRun = run;
       garden.history = [run, ...(garden.history ?? [])].slice(0, 12);
-      const memory = buildMemory(garden, await readMemory(workspace), run);
+      const previousMemory = await readMemory(workspace);
+      const memory = buildMemory(garden, previousMemory, run);
+      if (input.continuousResearch) {
+        const topicCount = garden.watchlist?.length ?? 0;
+        memory.watchTopicCursor = topicCount > 0 ? ((previousMemory.watchTopicCursor ?? 0) + 1) % topicCount : 0;
+      }
       await workspace.fs.writeFile("/memory.json", JSON.stringify(memory));
       await workspace.fs.writeFile("/garden.json", JSON.stringify(garden));
       await updateGardenIndex(env, garden);
@@ -258,6 +335,7 @@ export default {
       garden.watchlist = current.includes(query) ? current : [query, ...current].slice(0, 12);
       const memory = await readMemory(workspace);
       memory.watchlist = garden.watchlist;
+      memory.watchTopicCursor = garden.watchlist.length ? (memory.watchTopicCursor ?? 0) % garden.watchlist.length : 0;
       await workspace.fs.writeFile("/memory.json", JSON.stringify(memory));
       await workspace.fs.writeFile("/garden.json", JSON.stringify(garden));
       await updateGardenIndex(env, garden);
