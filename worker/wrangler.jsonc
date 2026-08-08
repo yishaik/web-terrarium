@@ -1,0 +1,9 @@
+{
+  "name": "web-terrarium-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "durable_objects": { "bindings": [{ "name": "AGENT_WORKSPACE", "class_name": "AgentWorkspace" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentWorkspace"] }]
+}
