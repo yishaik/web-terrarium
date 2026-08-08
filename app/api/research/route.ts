@@ -10,13 +10,14 @@ function isProvider(value: unknown): value is Provider {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null) as { query?: unknown; provider?: unknown; gardenSlug?: unknown } | null;
+  const body = await request.json().catch(() => null) as { query?: unknown; provider?: unknown; gardenSlug?: unknown; contextQuery?: unknown } | null;
   const query = typeof body?.query === "string" ? body.query.trim() : "";
   if (!query || query.length > 240) {
     return NextResponse.json({ error: "Enter a research seed of up to 240 characters." }, { status: 400 });
   }
   const provider = isProvider(body?.provider) ? body.provider : "fastcrw";
-  const run = await research(query, provider);
+  const contextQuery = typeof body?.contextQuery === "string" ? body.contextQuery.trim().slice(0, 240) : undefined;
+  const run = await research(query, provider, contextQuery || undefined);
   const gardenSlug = typeof body?.gardenSlug === "string" ? body.gardenSlug : "";
   if (gardenSlug) {
     const { userId } = await auth();

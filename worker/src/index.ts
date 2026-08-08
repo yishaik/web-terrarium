@@ -3,7 +3,7 @@ import { getWorkspace, withWorkspace, type DurableObjectStorageLike, type Worksp
 
 type Visibility = "public" | "private";
 type Source = { title: string; url: string; description: string; domain: string };
-type Brief = { headline: string; summary: string; highlights: Array<{ title: string; detail: string }>; newSources?: number };
+type Brief = { headline: string; summary: string; highlights: Array<{ title: string; detail: string }>; executiveSummary?: { takeaway: string; points: Array<{ title: string; detail: string }> }; newSources?: number };
 type Run = { query: string; provider?: "fastcrw" | "firecrawl"; mode?: "live" | "demo"; note?: string; sources: Source[]; brief?: Brief; recordedAt?: string };
 type StoredRun = Omit<Run, "recordedAt"> & { recordedAt: string };
 type Garden = { slug: string; title: string; ownerId: string; visibility: Visibility; createdAt: string; latestRun?: StoredRun; history?: StoredRun[]; watchlist?: string[] };

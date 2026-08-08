@@ -11,7 +11,7 @@ type Panel = "brief" | "recent" | "popular";
 const starter: ResearchRun = {
   query: "AI video tools", provider: "fastcrw", mode: "demo",
   note: "Your first three seeds are waiting. Give the garden a question.",
-  brief: { headline: "A small garden is ready", summary: "Plant a question to get a focused reading path and a living map of its sources.", highlights: [] },
+  brief: { headline: "A small garden is ready", summary: "Plant a question to get a focused reading path and a living map of its sources.", highlights: [], executiveSummary: { takeaway: "Your executive summary will appear here after the first grow, grounded in the sources the terrarium finds.", points: [] } },
   sources: [
     { title: "Plant a research seed", url: "#", description: "Ask a question or paste a URL to begin.", domain: "your terrarium" },
     { title: "Watch the ecosystem react", url: "#", description: "Every source becomes a living node in your map.", domain: "living interface" },
@@ -46,6 +46,7 @@ function Terrarium() {
   const [popular, setPopular] = useState<Topic[]>([]);
   const [shareState, setShareState] = useState<"idle" | "sharing" | "copied">("idle");
   const [watchState, setWatchState] = useState("");
+  const [followUp, setFollowUp] = useState("");
 
   const canopy = useMemo(() => run.sources.slice(0, 6), [run.sources]);
 
@@ -65,16 +66,28 @@ function Terrarium() {
     });
   }
 
-  async function plant(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function grow(nextQuery: string, contextQuery?: string) {
     setLoading(true); setError(""); setWatchState(""); setShareState("idle");
     try {
-      const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, provider, gardenSlug: gardenSlug || undefined }) });
+      const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: nextQuery, provider, gardenSlug: gardenSlug || undefined, contextQuery }) });
       const payload = await response.json() as ResearchRun & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Could not plant this seed.");
-      setRun(payload); remember(payload); setPanel("brief");
+      setQuery(nextQuery); setRun(payload); remember(payload); setPanel("brief");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not plant this seed."); }
     finally { setLoading(false); }
+  }
+
+  async function plant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await grow(query);
+  }
+
+  async function askFollowUp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const question = followUp.trim();
+    if (!question) return;
+    setFollowUp("");
+    await grow(question, run.contextQuery ?? run.query);
   }
 
   async function shareRun() {
@@ -123,6 +136,8 @@ function Terrarium() {
       <div className="notes-heading"><div><p className="eyebrow">FIELD NOTES</p><div className="panel-tabs" role="tablist"><button className={panel === "brief" ? "active" : ""} onClick={() => setPanel("brief")} type="button">Reading guide</button><button className={panel === "recent" ? "active" : ""} onClick={() => setPanel("recent")} type="button">Recent</button><button className={panel === "popular" ? "active" : ""} onClick={() => setPanel("popular")} type="button">Popular</button></div></div><p>{run.note}</p></div>
       {panel === "brief" && <>
         <section className="research-brief"><div><p className="eyebrow">WHAT MATTERS</p><h2>{run.brief.headline}</h2><p>{run.brief.summary}</p></div><div className="brief-status">{run.brief.newSources !== undefined ? <><strong>{run.brief.newSources}</strong><span>new since your previous grow</span></> : <><strong>{run.sources.length}</strong><span>sources ready to explore</span></>}</div></section>
+        <section className="executive-summary"><p className="eyebrow">EXECUTIVE SUMMARY</p><h3>What you need to know</h3><p>{run.brief.executiveSummary.takeaway}</p>{run.brief.executiveSummary.points.length > 0 && <ol>{run.brief.executiveSummary.points.map((point, index) => <li key={`${point.title}-${index}`}><strong>{point.title}</strong><span>{point.detail}</span></li>)}</ol>}</section>
+        <form className="follow-up-form" onSubmit={askFollowUp}><label htmlFor="follow-up">Ask a follow-up question</label><div><input id="follow-up" value={followUp} onChange={(event) => setFollowUp(event.target.value)} placeholder="What matters most for a small team?" maxLength={180} disabled={loading} /><button type="submit" disabled={loading || !followUp.trim()}>{loading ? "Researching..." : "Ask"}</button></div><small>It will research this question in the context of: {run.contextQuery ?? run.query}</small></form>
         <div className="run-actions"><button type="button" className="secondary-button" onClick={() => void shareRun()} disabled={shareState === "sharing"}>{shareState === "copied" ? "Link copied" : shareState === "sharing" ? "Creating link..." : "Share this result"}</button>{gardenSlug && <button type="button" className="text-button" onClick={() => void watchTopic()}>Follow this topic</button>}{watchState && <span className="action-note">{watchState}</span>}</div>
         <ol className="source-list">{run.sources.map((source, index) => <li key={`${source.url}-${index}`}><span className="number">0{index + 1}</span><div><a href={source.url} target={source.url === "#" ? undefined : "_blank"} rel="noreferrer">{source.title}</a><p>{source.description}</p></div><span className="domain">{source.domain}</span></li>)}</ol>
       </>}

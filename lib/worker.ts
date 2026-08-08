@@ -17,7 +17,7 @@ export type StoredRun = {
   mode?: "live" | "demo";
   note?: string;
   sources: Array<{ title: string; url: string; description: string; domain: string }>;
-  brief?: { headline: string; summary: string; highlights: Array<{ title: string; detail: string }>; newSources?: number };
+  brief?: { headline: string; summary: string; highlights: Array<{ title: string; detail: string }>; executiveSummary?: { takeaway: string; points: Array<{ title: string; detail: string }> }; newSources?: number };
   recordedAt: string;
 };
 

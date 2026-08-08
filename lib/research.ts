@@ -11,6 +11,10 @@ export type ResearchBrief = {
   headline: string;
   summary: string;
   highlights: Array<{ title: string; detail: string }>;
+  executiveSummary: {
+    takeaway: string;
+    points: Array<{ title: string; detail: string }>;
+  };
   newSources?: number;
 };
 
@@ -21,6 +25,7 @@ export type ResearchRun = {
   mode: "live" | "demo";
   note: string;
   brief: ResearchBrief;
+  contextQuery?: string;
   recordedAt?: string;
 };
 
@@ -47,13 +52,15 @@ const demoSources: ResearchSource[] = [
 
 function buildBrief(query: string, sources: ResearchSource[]): ResearchBrief {
   const domains = [...new Set(sources.map((source) => source.domain))].slice(0, 3);
+  const points = sources.slice(0, 3).map((source) => ({ title: source.title, detail: source.description }));
   return {
     headline: `${sources.length} signals for ${query}`,
     summary: `A focused reading path across ${domains.join(", ") || "the open web"}. Start with the first source, then follow the branches that match your question.`,
-    highlights: sources.slice(0, 3).map((source) => ({
-      title: source.title,
-      detail: source.description,
-    })),
+    highlights: points,
+    executiveSummary: {
+      takeaway: `What you need to know: the strongest current signal comes from ${domains.join(", ") || "these sources"}. Read the key points below first, then use a follow-up question to narrow the decision or uncertainty that matters to you.`,
+      points,
+    },
   };
 }
 
@@ -132,20 +139,23 @@ async function searchFirecrawl(query: string): Promise<ResearchSource[]> {
   return candidates.map(normalize).filter((source): source is ResearchSource => source !== null).slice(0, 6);
 }
 
-export async function research(query: string, provider: Provider): Promise<ResearchRun> {
+export async function research(query: string, provider: Provider, contextQuery?: string): Promise<ResearchRun> {
+  const searchQuery = contextQuery ? `${contextQuery} Follow-up question: ${query}`.slice(0, 480) : query;
+  const briefTopic = contextQuery ? `${contextQuery}: ${query}` : query;
   try {
-    const sources = provider === "fastcrw" ? await searchFastcrw(query) : await searchFirecrawl(query);
+    const sources = provider === "fastcrw" ? await searchFastcrw(searchQuery) : await searchFirecrawl(searchQuery);
     if (!sources.length) throw new Error("No sources found");
-    return { query, provider, sources, mode: "live", note: "Fresh web results just entered the terrarium.", brief: buildBrief(query, sources) };
+    return { query, contextQuery, provider, sources, mode: "live", note: contextQuery ? `Follow-up research for ${contextQuery} just entered the terrarium.` : "Fresh web results just entered the terrarium.", brief: buildBrief(briefTopic, sources) };
   } catch (error) {
     const missingKey = error instanceof Error && error.message.includes("not configured");
     return {
       query,
+      contextQuery,
       provider,
       sources: demoSources,
       mode: "demo",
       note: missingKey ? `Demo habitat: add the ${provider === "fastcrw" ? "CRW_API_KEY" : "FIRECRAWL_API_KEY"} environment variable for a live crawl.` : "The crawler was unavailable, so the habitat is showing its starter seeds.",
-      brief: buildBrief(query, demoSources),
+      brief: buildBrief(briefTopic, demoSources),
     };
   }
 }

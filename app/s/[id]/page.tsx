@@ -13,7 +13,7 @@ export default async function SharedResearchPage({ params }: { params: Promise<{
     <Link className="wordmark" href="/">WT</Link>
     <p className="eyebrow">SHARED FIELD NOTES</p>
     <h1>{run.query}</h1>
-    {run.brief && <section className="research-brief"><p className="eyebrow">READING GUIDE</p><h2>{run.brief.headline}</h2><p>{run.brief.summary}</p></section>}
+    {run.brief && <><section className="research-brief"><p className="eyebrow">READING GUIDE</p><h2>{run.brief.headline}</h2><p>{run.brief.summary}</p></section>{run.brief.executiveSummary && <section className="executive-summary"><p className="eyebrow">EXECUTIVE SUMMARY</p><h3>What you need to know</h3><p>{run.brief.executiveSummary.takeaway}</p></section>}</>}
     <section className="field-notes"><p className="eyebrow">{run.sources.length} SOURCES</p><ol className="source-list">{run.sources.map((source, index) => <li key={`${source.url}-${index}`}><span className="number">0{index + 1}</span><div><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a><p>{source.description}</p></div><span className="domain">{source.domain}</span></li>)}</ol></section>
   </main>;
 }
