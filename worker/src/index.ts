@@ -137,7 +137,8 @@ export default {
       const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? "1") || 1, 10));
       const id = env.AGENT_WORKSPACE.idFromName("active-gardens");
       using workspace = await getWorkspace(env.AGENT_WORKSPACE.get(id) as WorkspaceHandle);
-      return Response.json({ gardens: (await readActiveGardens(workspace)).slice(0, limit) });
+      const actionable = (await readActiveGardens(workspace)).filter((garden) => Boolean(garden.latestQuery || garden.watchlist?.length));
+      return Response.json({ gardens: actionable.slice(0, limit) });
     }
 
     if (segments[0] === "shares") {
