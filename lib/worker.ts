@@ -5,6 +5,7 @@ export type Garden = {
   title: string;
   ownerId: string;
   visibility: Visibility;
+  continuousResearchEnabled?: boolean;
   createdAt: string;
   latestRun?: StoredRun;
   history?: StoredRun[];
@@ -40,23 +41,25 @@ export type GardenMemory = {
   hypotheses?: string[];
   openQuestions?: string[];
   lastSynthesizedAt?: string;
+  watchTopicCursor?: number;
   researchCount: number;
 };
 
 export type GardenResearchContext = {
-  garden: Pick<Garden, "slug" | "title" | "ownerId" | "visibility" | "watchlist">;
+  garden: Pick<Garden, "slug" | "title" | "ownerId" | "visibility" | "watchlist" | "continuousResearchEnabled">;
   memory: GardenMemory;
 };
 
 export type ActiveGarden = {
   slug: string;
   ownerId: string;
+  continuousResearchEnabled?: boolean;
   latestQuery?: string;
   lastRun?: string;
   watchlist?: string[];
 };
 
-export type GardenSummary = Pick<Garden, "slug" | "title" | "visibility" | "createdAt" | "watchlist"> & { latestRun?: Pick<StoredRun, "query" | "recordedAt"> };
+export type GardenSummary = Pick<Garden, "slug" | "title" | "visibility" | "continuousResearchEnabled" | "createdAt" | "watchlist"> & { latestRun?: Pick<StoredRun, "query" | "recordedAt"> };
 export type PopularTopic = { query: string; count: number; lastSeen: string };
 
 function workerBase() {
@@ -91,7 +94,7 @@ export async function getGardenResearchContext(slug: string): Promise<GardenRese
 }
 
 export async function getActiveGardens(limit = 1): Promise<ActiveGarden[]> {
-  const response = await workerRequest(`/active-gardens?limit=${Math.max(1, Math.min(limit, 10))}`);
+  const response = await workerRequest(`/active-gardens?enabledOnly=1&limit=${Math.max(1, Math.min(limit, 10))}`);
   const payload = await response.json() as { gardens?: ActiveGarden[] };
   return payload.gardens ?? [];
 }
