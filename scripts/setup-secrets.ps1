@@ -31,11 +31,16 @@ $values['CRW_API_KEY'] = Read-OptionalSecret 'CRW_API_KEY' 'Recommended: enables
 $values['FIRECRAWL_API_KEY'] = Read-OptionalSecret 'FIRECRAWL_API_KEY' 'Optional: enables Firecrawl as a second crawler.'
 $values['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] = Read-OptionalSecret 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY' 'For public sign-in UI. Starts with pk_.'
 $values['CLERK_SECRET_KEY'] = Read-OptionalSecret 'CLERK_SECRET_KEY' 'For server-side owner authentication. Starts with sk_.'
-$values['AGENT_WORKER_URL'] = Read-OptionalSecret 'AGENT_WORKER_URL' 'Optional for now: the Cloudflare Worker URL after it is deployed.'
+$values['AGENT_WORKER_URL'] = Read-OptionalSecret 'AGENT_WORKER_URL' 'Cloudflare Worker URL after it is deployed.'
+$values['AGENT_WORKER_TOKEN'] = Read-OptionalSecret 'AGENT_WORKER_TOKEN' 'Shared internal token used only between the Vercel app and Worker.'
+$values['AI_GATEWAY_API_KEY'] = Read-OptionalSecret 'AI_GATEWAY_API_KEY' 'Optional local/non-Vercel fallback. Vercel deployments should prefer OIDC.'
+$values['CRON_SECRET'] = Read-OptionalSecret 'CRON_SECRET' 'Required in production to authenticate scheduled regrowth.'
 
 $lines = @(
   '# Created locally by scripts/setup-secrets.ps1. Never commit this file.',
-  'CRW_API_URL=https://api.fastcrw.com'
+  'CRW_API_URL=https://api.fastcrw.com',
+  'AI_MODEL=openai/gpt-5.6-luna',
+  'CONTINUOUS_RESEARCH_BATCH_SIZE=1'
 )
 foreach ($pair in $values.GetEnumerator()) {
   if ($null -ne $pair.Value -and $pair.Value.Length -gt 0) {
