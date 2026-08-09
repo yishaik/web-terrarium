@@ -1,5 +1,5 @@
-import type { Garden, StoredRun } from "@/lib/worker";
-import { diffLivingDocuments } from "@/lib/document/diff";
+import type { Garden, StoredRun } from "../worker.ts";
+import { diffLivingDocuments } from "./diff.ts";
 import {
   LIVING_DOCUMENT_SCHEMA_VERSION,
   type ConfidenceBand,
@@ -8,7 +8,7 @@ import {
   type OpenQuestion,
   type SourceReference,
   type Uncertainty,
-} from "@/shared/document";
+} from "../../shared/document.ts";
 
 function hashText(value: string) {
   let hash = 2166136261;
