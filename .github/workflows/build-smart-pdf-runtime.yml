@@ -1,67 +1,125 @@
 name: Build Smart PDF runtime
 
 on:
+  push:
+    branches: [agent/living-doc-phase-9]
+    paths:
+      - .github/workflows/build-smart-pdf-runtime.yml
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-runtime:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Install pinned Emscripten SDK
+        with:
+          ref: agent/living-doc-phase-9
+      - name: Build pinned JavaScript-only llama.cpp runtime
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch 4.0.10 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
-          /tmp/emsdk/emsdk install 4.0.10
-          /tmp/emsdk/emsdk activate 4.0.10
-      - name: Build llama.cpp b9637 as JavaScript only
-        shell: bash
-        run: |
-          set -euo pipefail
+          git clone --depth 1 --branch 1.39.20 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 1.39.20-fastcomp
+          /tmp/emsdk/emsdk activate 1.39.20-fastcomp
           source /tmp/emsdk/emsdk_env.sh
-          git clone --depth 1 --branch b9637 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
-          cat >> /tmp/llama.cpp/CMakeLists.txt <<'EOF'
-          if (EMSCRIPTEN)
-            find_package(Threads REQUIRED)
-            add_subdirectory(examples/simple)
-          endif()
-          EOF
-          emcmake cmake -S /tmp/llama.cpp -B /tmp/llama-build \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DCMAKE_EXECUTABLE_SUFFIX=.js \
-            -DLLAMA_BUILD_HTML=OFF \
-            -DLLAMA_WASM_MEM64=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
+
+          git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp
+          cd /tmp/llama.cpp
+          git reset --hard dd047b4
+
+          python3 - <<'PY'
+          from pathlib import Path
+          cmake = Path('/tmp/llama.cpp/CMakeLists.txt')
+          text = cmake.read_text()
+          needle = 'add_subdirectory(common)\n'
+          if 'add_subdirectory(examples/main)' not in text:
+              if needle not in text:
+                  raise SystemExit('Could not locate common CMake target')
+              text = text.replace(needle, needle + 'add_subdirectory(examples/main)\n', 1)
+          cmake.write_text(text)
+
+          llama = Path('/tmp/llama.cpp/llama.cpp')
+          text = llama.read_text()
+          branch = '''            } else if (\n                tokenizer_pre == "qwen2") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n'''
+          if 'tokenizer_pre == "smollm"' not in text:
+              if branch not in text:
+                  raise SystemExit('Could not locate qwen2 tokenizer pre branch')
+              text = text.replace(branch, branch + '''            } else if (\n                tokenizer_pre == "smollm") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n''', 1)
+          llama.write_text(text)
+          PY
+
+          mkdir -p /tmp/llama-build
+          cd /tmp/llama-build
+          emcmake cmake /tmp/llama.cpp \
             -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_TOOLS=OFF \
-            -DLLAMA_BUILD_SERVER=OFF \
-            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_CURL=OFF \
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
-            -DGGML_BACKEND_DL=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_EXE_LINKER_FLAGS="-Oz -sWASM=0 -sSINGLE_FILE=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=1073741824 -sENVIRONMENT=shell -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_main -sEXPORTED_RUNTIME_METHODS=FS,callMain"
-          cmake --build /tmp/llama-build --target llama-simple -j2
-          mkdir -p smart-runtime
-          cp /tmp/llama-build/bin/llama-simple.js smart-runtime/llama-runtime.js
-          test -s smart-runtime/llama-runtime.js
-          test ! -s /tmp/llama-build/bin/llama-simple.wasm
-          RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
-          RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
-          cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppTag":"b9637","llamaCppCommit":"aedb2a5","llamaCppLicense":"MIT","emscripten":"4.0.10","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false}
+            -DBUILD_SHARED_LIBS=OFF
+          export EMCC_CFLAGS="-O3 -s SINGLE_FILE=1 -fno-rtti -flto=full -s DISABLE_EXCEPTION_CATCHING=0 -sWASM=0 -Wno-fastcomp -Wabsolute-value -static '-sEXPORTED_FUNCTIONS=[_main]' '-sEXTRA_EXPORTED_RUNTIME_METHODS=[\"FS\",\"callMain\"]' -s FORCE_FILESYSTEM=1 -s INITIAL_MEMORY=1GB -s MAXIMUM_MEMORY=1500MB -s ALLOW_MEMORY_GROWTH -s ASSERTIONS=1"
+          cd examples/main
+          emmake make -j2
+
+          mkdir -p "$GITHUB_WORKSPACE/public/smart-pdf"
+          cp /tmp/llama-build/bin/llama-cli.js "$GITHUB_WORKSPACE/public/smart-pdf/llama-runtime.js"
+          cd "$GITHUB_WORKSPACE"
+          cat >> public/smart-pdf/llama-runtime.js <<'EOF'
+          ;(function(){
+            var wtOriginalCallMain = Module.callMain;
+            Module.callMain = function(args) {
+              var next = Array.prototype.slice.call(args || []);
+              if (next.indexOf('-p') < 0 && next.length && String(next[next.length - 1]).charAt(0) !== '-') {
+                next.splice(next.length - 1, 0, '-p');
+              }
+              return wtOriginalCallMain(next);
+            };
+          })();
           EOF
-          grep -q "callMain" smart-runtime/llama-runtime.js
-          grep -q "FS" smart-runtime/llama-runtime.js
+          test -s public/smart-pdf/llama-runtime.js
+          RUNTIME_SHA=$(sha256sum public/smart-pdf/llama-runtime.js | cut -d' ' -f1)
+          RUNTIME_BYTES=$(wc -c < public/smart-pdf/llama-runtime.js | tr -d ' ')
+          cat > public/smart-pdf/runtime-manifest.json <<EOF
+          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":"qwen2-single-digit","promptCompat":true}
+          EOF
           test "$RUNTIME_BYTES" -lt 50000000
-      - uses: actions/upload-artifact@v4
-        with:
-          name: smart-pdf-runtime
-          path: smart-runtime
-          if-no-files-found: error
+
+      - name: Smoke test pinned SmolLM2 model
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL=/tmp/SmolLM2-135M-Instruct-Q2_K.gguf
+          curl -L --fail --retry 3 --retry-delay 2 -o "$MODEL" 'https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q2_K.gguf?download=true'
+          echo '741ad12b64088fedc17c33aacb22e48be1972ef36a39f03666dd68bd15614fb9  /tmp/SmolLM2-135M-Instruct-Q2_K.gguf' | sha256sum -c -
+          cat > /tmp/runtime-smoke.js <<'EOF'
+          var WT_OUT=[];
+          var Module={noInitialRun:true,print:function(x){WT_OUT.push(String(x));},printErr:function(x){console.error(String(x));}};
+          var print=Module.print, printErr=Module.printErr;
+          EOF
+          cat public/smart-pdf/llama-runtime.js >> /tmp/runtime-smoke.js
+          cat >> /tmp/runtime-smoke.js <<'EOF'
+          var fs=require('fs');
+          Module.FS.writeFile('/model.gguf', new Uint8Array(fs.readFileSync('/tmp/SmolLM2-135M-Instruct-Q2_K.gguf')));
+          WT_OUT=[];
+          Module.callMain(['-m','/model.gguf','-n','2','-ngl','0','<|im_start|>user\nSay OK.<|im_end|>\n<|im_start|>assistant\n']);
+          if(!WT_OUT.join('\n').trim()) throw new Error('No model output was produced');
+          EOF
+          node --max-old-space-size=4096 /tmp/runtime-smoke.js
+
+      - name: Commit verified runtime asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add public/smart-pdf/llama-runtime.js public/smart-pdf/runtime-manifest.json
+          if git diff --cached --quiet; then
+            echo "Runtime already current."
+            exit 0
+          fi
+          git commit -m "Publish verified Smart PDF llama runtime"
+          git push origin HEAD:agent/living-doc-phase-9
