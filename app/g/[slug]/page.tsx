@@ -14,6 +14,7 @@ export default async function PublicGardenPage({ params }: { params: Promise<{ s
     <p className="eyebrow">PUBLIC WEB TERRARIUM</p>
     <h1>{garden.title}</h1>
     <p className="intro">A living research garden, grown from the open web.</p>
+    <Link className="primary-link" href={`/g/${garden.slug}/document`}>Open living research document →</Link>
     {garden.latestRun ? <>
       <section className="research-brief">
         <p className="eyebrow">LATEST GROWTH · {garden.latestRun.query}</p>
