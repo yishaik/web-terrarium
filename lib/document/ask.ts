@@ -16,8 +16,10 @@ type EvidenceHit = {
   score: number;
 };
 
+const STOP_WORDS = new Set(["the", "and", "for", "that", "this", "with", "from", "what", "when", "where", "which", "who", "how", "why", "are", "was", "were", "has", "have", "had", "does", "did", "can", "could", "would", "should", "into", "about", "your", "their"]);
+
 function tokens(value: string) {
-  return [...new Set(value.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((word) => word.length > 2))];
+  return [...new Set(value.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((word) => word.length > 2 && !STOP_WORDS.has(word)))];
 }
 
 export function retrieveDocumentEvidence(question: string, document: LivingDocument, limit = 6): EvidenceHit[] {
@@ -27,9 +29,10 @@ export function retrieveDocumentEvidence(question: string, document: LivingDocum
     .map((finding) => {
       const searchable = `${finding.title} ${finding.detail}`.toLowerCase();
       const overlap = query.filter((token) => searchable.includes(token)).length;
-      const phraseBonus = searchable.includes(question.toLowerCase()) ? 3 : 0;
+      const phraseBonus = question.length > 8 && searchable.includes(question.toLowerCase()) ? 3 : 0;
+      const relevance = overlap + phraseBonus;
       const confidenceBonus = finding.confidence === "high" ? .6 : finding.confidence === "medium" ? .3 : 0;
-      return { findingId: finding.id, title: finding.title, detail: finding.detail, sourceIds: finding.sourceIds, score: overlap + phraseBonus + confidenceBonus };
+      return { findingId: finding.id, title: finding.title, detail: finding.detail, sourceIds: finding.sourceIds, score: relevance > 0 ? relevance + confidenceBonus : 0 };
     })
     .filter((hit) => hit.score > 0)
     .sort((a, b) => b.score - a.score)
