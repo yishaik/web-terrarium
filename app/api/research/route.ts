@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { syncLivingDocument } from "@/lib/document/sync";
 import { research, type Provider, type ResearchRun } from "@/lib/research";
 import { getGardenResearchContext, workerRequest } from "@/lib/worker";
 
@@ -38,7 +39,10 @@ export async function POST(request: Request) {
     try {
       const saved = await workerRequest(`/gardens/${encodeURIComponent(gardenSlug)}/runs`, { method: "POST", body: JSON.stringify({ ...run, ownerId: userId }) });
       const payload = await saved.json() as { run?: ResearchRun };
-      if (payload.run) return NextResponse.json(payload.run);
+      if (payload.run) {
+        await syncLivingDocument(gardenSlug, userId);
+        return NextResponse.json(payload.run);
+      }
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : "Research completed but could not be saved." }, { status: 503 });
     }
