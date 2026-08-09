@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { getWorkspace, withWorkspace, type DurableObjectStorageLike, type WorkspaceHandle } from "@cloudflare/computer";
+import { isLivingDocument, type LivingDocument } from "../../shared/document";
 
 type Visibility = "public" | "private";
 type Source = { title: string; url: string; description: string; domain: string };
@@ -50,6 +51,7 @@ type ActiveGarden = {
   lastRun?: string;
   watchlist?: string[];
 };
+type DocumentIndex = { latest: number; versions: number[] };
 
 interface Env { AGENT_WORKSPACE: DurableObjectNamespace; INTERNAL_TOKEN: string; }
 
@@ -69,6 +71,45 @@ async function readGarden(workspace: Awaited<ReturnType<typeof getWorkspace>>): 
 async function readMemory(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<GardenMemory> {
   try { return JSON.parse(await workspace.fs.readFile("/memory.json", "utf8")) as GardenMemory; }
   catch { return { researchCount: 0, watchTopicCursor: 0 }; }
+}
+
+async function readDocument(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<LivingDocument | null> {
+  try {
+    const parsed = JSON.parse(await workspace.fs.readFile("/document.json", "utf8"));
+    return isLivingDocument(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+async function readDocumentVersion(workspace: Awaited<ReturnType<typeof getWorkspace>>, version: number): Promise<LivingDocument | null> {
+  try {
+    const parsed = JSON.parse(await workspace.fs.readFile(`/documents/v${version}.json`, "utf8"));
+    return isLivingDocument(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+async function readDocumentIndex(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<DocumentIndex> {
+  try {
+    const parsed = JSON.parse(await workspace.fs.readFile("/documents/index.json", "utf8")) as Partial<DocumentIndex>;
+    return {
+      latest: Number.isInteger(parsed.latest) ? parsed.latest as number : 0,
+      versions: Array.isArray(parsed.versions) ? parsed.versions.filter((value): value is number => Number.isInteger(value) && value > 0).slice(0, 24) : [],
+    };
+  } catch { return { latest: 0, versions: [] }; }
+}
+
+async function writeDocument(workspace: Awaited<ReturnType<typeof getWorkspace>>, document: LivingDocument) {
+  const current = await readDocument(workspace);
+  if (current && document.documentVersion < current.documentVersion) {
+    throw new Error("Document version would move backwards.");
+  }
+  await workspace.fs.mkdir("/documents", { recursive: true });
+  await workspace.fs.writeFile(`/documents/v${document.documentVersion}.json`, JSON.stringify(document));
+  await workspace.fs.writeFile("/document.json", JSON.stringify(document));
+  const index = await readDocumentIndex(workspace);
+  const versions = [document.documentVersion, ...index.versions.filter((version) => version !== document.documentVersion)]
+    .sort((a, b) => b - a)
+    .slice(0, 24);
+  await workspace.fs.writeFile("/documents/index.json", JSON.stringify({ latest: document.documentVersion, versions } satisfies DocumentIndex));
 }
 
 async function readGardenIndex(workspace: Awaited<ReturnType<typeof getWorkspace>>): Promise<GardenSummary[]> {
@@ -219,9 +260,13 @@ export default {
 
     const slug = segments[1];
     if (segments[0] !== "gardens" || (slug && !allowedSlug(slug))) return Response.json({ error: "Not found" }, { status: 404 });
+    const tokenAuthorized = request.headers.get("x-internal-token") === env.INTERNAL_TOKEN;
     const isPublicRead = request.method === "GET" && Boolean(slug) && segments.length === 2;
+    const isDocumentRead = request.method === "GET" && Boolean(slug) && segments.length === 3 && segments[2] === "document";
     const isContextRead = request.method === "GET" && Boolean(slug) && segments.length === 3 && segments[2] === "context";
-    if (!isPublicRead && request.headers.get("x-internal-token") !== env.INTERNAL_TOKEN) return unauthorized();
+    const isStateRead = request.method === "GET" && Boolean(slug) && segments.length === 3 && segments[2] === "state";
+    const isVersionRead = request.method === "GET" && Boolean(slug) && segments.length === 4 && segments[2] === "documents";
+    if (!isPublicRead && !isDocumentRead && !tokenAuthorized) return unauthorized();
 
     if (request.method === "POST" && segments.length === 1) {
       const input = await request.json() as Partial<Garden>;
@@ -257,7 +302,14 @@ export default {
       return Response.json(garden);
     }
 
+    if (isDocumentRead) {
+      if (garden.visibility !== "public" && !tokenAuthorized) return Response.json({ error: "Not found" }, { status: 404 });
+      const document = await readDocument(workspace);
+      return document ? Response.json({ document }) : Response.json({ error: "Not found" }, { status: 404 });
+    }
+
     if (isContextRead) {
+      if (!tokenAuthorized) return unauthorized();
       return Response.json({
         garden: {
           slug: garden.slug,
@@ -269,6 +321,28 @@ export default {
         },
         memory: await readMemory(workspace),
       });
+    }
+
+    if (isStateRead) {
+      if (!tokenAuthorized) return unauthorized();
+      return Response.json({ garden, memory: await readMemory(workspace), document: await readDocument(workspace) });
+    }
+
+    if (isVersionRead) {
+      if (!tokenAuthorized) return unauthorized();
+      const version = Number(segments[3]);
+      if (!Number.isInteger(version) || version < 1) return Response.json({ error: "Invalid document version" }, { status: 400 });
+      const document = await readDocumentVersion(workspace, version);
+      return document ? Response.json({ document }) : Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    if (request.method === "PUT" && segments.length === 3 && segments[2] === "document") {
+      const input = await request.json() as { ownerId?: string; document?: unknown };
+      if (!input.ownerId || input.ownerId !== garden.ownerId) return Response.json({ error: "Forbidden" }, { status: 403 });
+      if (!isLivingDocument(input.document) || input.document.gardenSlug !== garden.slug) return Response.json({ error: "Invalid LivingDocument" }, { status: 400 });
+      try { await writeDocument(workspace, input.document); }
+      catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Could not store document" }, { status: 409 }); }
+      return Response.json({ document: input.document });
     }
 
     if (request.method === "PATCH" && segments.length === 2) {

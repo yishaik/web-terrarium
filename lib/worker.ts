@@ -1,3 +1,5 @@
+import type { LivingDocument } from "@/shared/document";
+
 export type Visibility = "public" | "private";
 
 export type Garden = {
@@ -50,6 +52,11 @@ export type GardenResearchContext = {
   memory: GardenMemory;
 };
 
+export type GardenState = {
+  garden: Garden;
+  memory: GardenMemory;
+};
+
 export type ActiveGarden = {
   slug: string;
   ownerId: string;
@@ -91,6 +98,43 @@ export async function getPublicGarden(slug: string): Promise<Garden | null> {
 export async function getGardenResearchContext(slug: string): Promise<GardenResearchContext> {
   const response = await workerRequest(`/gardens/${encodeURIComponent(slug)}/context`);
   return response.json() as Promise<GardenResearchContext>;
+}
+
+export async function getGardenState(slug: string): Promise<GardenState> {
+  const response = await workerRequest(`/gardens/${encodeURIComponent(slug)}/state`);
+  return response.json() as Promise<GardenState>;
+}
+
+export async function getPublicLivingDocument(slug: string): Promise<LivingDocument | null> {
+  const url = process.env.AGENT_WORKER_URL;
+  if (!url) return null;
+  const response = await fetch(`${url.replace(/\/$/, "")}/gardens/${encodeURIComponent(slug)}/document`, { cache: "no-store" });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Could not load this living document.");
+  const payload = await response.json() as { document?: LivingDocument };
+  return payload.document ?? null;
+}
+
+export async function getLivingDocument(slug: string): Promise<LivingDocument | null> {
+  const response = await workerRequest(`/gardens/${encodeURIComponent(slug)}/document`);
+  const payload = await response.json() as { document?: LivingDocument | null };
+  return payload.document ?? null;
+}
+
+export async function getLivingDocumentVersion(slug: string, version: number): Promise<LivingDocument | null> {
+  const response = await workerRequest(`/gardens/${encodeURIComponent(slug)}/documents/${version}`).catch(() => null);
+  if (!response) return null;
+  const payload = await response.json() as { document?: LivingDocument | null };
+  return payload.document ?? null;
+}
+
+export async function putLivingDocument(slug: string, ownerId: string, document: LivingDocument): Promise<LivingDocument> {
+  const response = await workerRequest(`/gardens/${encodeURIComponent(slug)}/document`, {
+    method: "PUT",
+    body: JSON.stringify({ ownerId, document }),
+  });
+  const payload = await response.json() as { document: LivingDocument };
+  return payload.document;
 }
 
 export async function getActiveGardens(limit = 1): Promise<ActiveGarden[]> {
