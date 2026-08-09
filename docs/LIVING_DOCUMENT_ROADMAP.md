@@ -1,204 +1,305 @@
 # Living Research Documents — implementation roadmap
 
-Status: **planned**  
+Status: **planned / architecture v2**  
 Parent tracking issue: #2  
 Coordination dependency: PR #1 (`feat/continuous-ai-terrarium`)
 
 ## Vision
 
-Turn every Web Terrarium Garden into a **versioned living research document**: a durable knowledge artifact that grows as new research arrives, preserves evidence and uncertainty, explains what changed, supports grounded questions, and can later be exported as a portable PDF snapshot or interactive offline artifact.
+Turn every Web Terrarium Garden into a **versioned living research document** that can be consumed in several forms: web UI, grounded Q&A, normal PDF, and a self-contained **Intelligent PDF** with embedded retrieval plus an optional local LLM.
 
-The core architectural rule is:
+The key architectural rule remains:
 
-> **Garden + immutable research runs remain the source of truth. LivingDocument is a rebuildable, versioned projection.**
+> **Garden + immutable research/evidence remain the source of truth. `LivingDocument` is a rebuildable, versioned projection. Artifacts are frozen projections of a known LivingDocument version.**
 
-This keeps the existing product available even if document generation, AI synthesis, PDF generation, or a future document experiment fails.
+The important v2 change is that PDF is no longer treated as a late side experiment. The artifact contract is designed from the LivingDocument layer onward so the same knowledge state can be exported consistently to HTML/Markdown/PDF and, later, to an offline PDF containing its own local inference runtime and model.
 
 ---
 
-## Current system baseline
+# Product model
 
-The repository already has the key primitives needed for this work:
+Web Terrarium has three distinct layers:
+
+```text
+RESEARCH / KNOWLEDGE PLANE
+Garden + runs + evidence + memory
+             |
+             v
+DOCUMENT PLANE
+LivingDocument vN
+             |
+      +------+------+----------------+
+      |             |                |
+      v             v                v
+Web document      Q&A API      Artifact compiler
+                                    |
+                    +---------------+----------------+
+                    |                                |
+                    v                                v
+               Normal PDF                   Intelligent PDF
+                                               |
+                                +--------------+--------------+
+                                |              |              |
+                           document data   search index   local LLM
+```
+
+This separation is deliberate:
+
+- Web Terrarium performs continuous research and grows knowledge.
+- `LivingDocument` expresses the current structured state of that knowledge.
+- Artifact compiler freezes one exact document version into portable output.
+- Intelligent PDF packages **knowledge + retrieval + runtime + model**, so local Q&A does not require the live Web Terrarium service.
+
+The embedded LLM does **not** need to memorize or be fine-tuned on the Garden. It receives retrieved evidence from the embedded snapshot at question time.
+
+---
+
+# Intelligent PDF target architecture
+
+A generated Smart/Intelligent PDF should conceptually contain:
+
+```text
+research-topic-v37.pdf
+|
++-- PDF pages / document UI
++-- artifact-manifest.json
++-- living-document.json       frozen v37 snapshot
++-- retrieval-index            compact local index
++-- selected source excerpts   bounded supporting evidence
++-- assistant prompt/policy
++-- llama.cpp-derived runtime   compiled for PDF JS environment
++-- model.gguf                  compact quantized local model
+```
+
+Expected local question flow:
+
+```text
+Question
+  |
+  v
+embedded local retrieval
+  |
+  v
+relevant findings + source excerpts
+  |
+  v
+small embedded LLM
+  |
+  v
+answer grounded in snapshot + local citations
+```
+
+The PDF must remain useful if the LLM cannot start: deterministic search/retrieval is the fallback.
+
+---
+
+# Artifact classes
+
+We will support three artifact levels instead of one ambiguous “PDF export”.
+
+## 1. Normal PDF
+
+Small, static, reproducible snapshot of one LivingDocument version.
+
+- no executable model;
+- readable in normal PDF readers;
+- contains version, freshness and citations;
+- canonical link back to the live Garden.
+
+## 2. Intelligent Offline PDF
+
+Self-contained snapshot with local interaction.
+
+- embedded LivingDocument snapshot;
+- compact retrieval index;
+- local search / Ask-this-document UI;
+- embedded runtime;
+- optional GGUF model selected from an approved model profile;
+- no API key or network required for offline Q&A;
+- viewer compatibility explicitly declared.
+
+## 3. Connected Living PDF
+
+An Intelligent PDF that also contains a non-secret manifest identifying its live source:
+
+```json
+{
+  "artifactSchemaVersion": 1,
+  "gardenSlug": "browser-agents",
+  "documentVersion": 37,
+  "canonicalUrl": "https://.../g/browser-agents/document"
+}
+```
+
+When its supported viewer/environment allows a safe version check, it may report:
+
+```text
+Embedded snapshot: v37
+Live Garden:       v43
+6 newer document versions are available.
+```
+
+Offline behavior always falls back to the embedded snapshot. A Connected PDF must never require live access to remain readable/useful.
+
+---
+
+# Artifact manifest contract
+
+Artifact-awareness begins in the core model, even before Intelligent PDF implementation.
+
+Proposed artifact metadata:
+
+```ts
+type ArtifactManifest = {
+  artifactSchemaVersion: number;
+  artifactType: "pdf" | "intelligent-pdf";
+  gardenSlug: string;
+  documentVersion: number;
+  generatedAt: string;
+  canonicalUrl?: string;
+  sourceFreshness?: string;
+  retrievalProfile?: {
+    algorithm: string;
+    chunkCount: number;
+    excerptCount: number;
+  };
+  localInference?: {
+    enabled: boolean;
+    runtime?: string;
+    modelId?: string;
+    modelFormat?: "gguf";
+    quantization?: string;
+  };
+};
+```
+
+The artifact compiler accepts a **specific persisted LivingDocument version**. It may never silently export “whatever is latest now” after artifact generation has started.
+
+---
+
+# Current system baseline
+
+The repository already has the important primitives needed for this work:
 
 - Next.js public research UI on Vercel.
-- Public Gardens at `/g/[slug]`.
-- Research runs with source lists and summaries.
-- Cloudflare Durable Object / Computer-backed Garden persistence.
-- Garden `latestRun`, bounded history, watchlists and per-run persisted files.
-- PR #1 is adding continuous research, durable memory/reports, AI synthesis, daily regrowth and CI.
+- public Gardens at `/g/[slug]`;
+- persisted research runs and source lists;
+- Cloudflare Computer/Durable Object Garden persistence;
+- Garden history/watchlist primitives;
+- continuous-research work in PR #1;
+- roadmap work under Epic #2.
 
-### Production baseline captured before roadmap work
-
-On 2026-08-09 the latest Vercel production deployment was `READY`. The latest deployment had no error/fatal runtime logs in the checked window. Four earlier `/middleware` errors with `Publishable key not valid` were observed on an older deployment; that is an existing auth/configuration signal and is **not** part of Living Document feature scope unless it reappears on the current deployment.
+The existing Garden experience remains production-critical. All LivingDocument and artifact paths are additive until separately approved for broader rollout.
 
 ---
 
 # Delivery principles
 
-## 1. Availability first
+## Availability first
 
-Living Document is additive until late rollout.
+- Do not replace `/g/[slug]` in early phases.
+- Add `/g/[slug]/document` independently.
+- A document compiler failure must not break a Garden.
+- Q&A failure must not break document rendering.
+- Artifact/PDF generation failure must not break either web route.
+- Intelligent-PDF tooling must never enter the critical Garden request path.
+- Last valid LivingDocument remains available when research or semantic updates fail.
 
-- Do not replace `/g/[slug]` during initial phases.
-- Add `/g/[slug]/document` as a separate route.
-- A broken document compiler must not break a Garden.
-- A broken Q&A endpoint must not break document rendering.
-- A broken PDF exporter must not break either web experience.
-- Continuous-research failure must leave the last valid document intact.
+## No destructive migration
 
-## 2. No destructive data migrations
+- `/garden.json`, `/runs/*`, evidence and source state keep their meaning.
+- LivingDocument storage is additive/versioned.
+- artifact output is disposable/rebuildable from persisted document versions.
+- no PDF becomes a source of truth for the Garden.
 
-All storage changes must be backward-compatible.
+## Deterministic before generative
 
-- Existing `/garden.json` keeps its meaning.
-- Existing `/runs/*` remain immutable research evidence.
-- PR #1 `/memory.json` and `/reports/*` remain independently useful.
-- New document files are additive and versioned.
-- Old code must continue to function if new files exist.
-- New code must tolerate Gardens that predate LivingDocument.
+The deterministic document compiler and local retrieval path exist before semantic mutation or embedded LLM inference. This provides test oracles and fallback behavior.
 
-## 3. Deterministic before generative
+## Semantic patches, not full rewrites
 
-The first compiler is deterministic. AI is layered on later as validated semantic patches.
+AI evolution operates through validated changes such as add/update/retract finding, evidence, contradiction, confidence and open-question changes. The last valid version is only replaced after validation.
 
-This gives us:
+## Artifact isolation
 
-- a fallback during provider outages;
-- a stable test oracle;
-- a rebuild path if generated state is corrupted;
-- a useful document before semantic mutation is ready.
+Heavy PDF/runtime/model work stays behind explicit export actions or artifact jobs. It is never required to serve `/`, `/g/[slug]`, `/g/[slug]/document` or regular research APIs.
 
-## 4. Semantic patches, not full rewrites
+## Preview before production
 
-Once AI is introduced, it should produce validated operations such as:
-
-- `add_finding`
-- `update_finding`
-- `retract_finding`
-- `add_evidence`
-- `add_contradiction`
-- `strengthen_confidence`
-- `weaken_confidence`
-- `add_open_question`
-- `resolve_open_question`
-- `update_section_summary`
-
-Every mutation must be attributable to source evidence and a research run.
-
-## 5. Preview before production
-
-Every implementation phase gets its own branch, isolated worktree and PR.
-
-No phase is merged until:
-
-1. application checks pass;
-2. Worker checks pass when Worker code changes;
-3. Vercel Preview is `READY`;
-4. existing-route smoke tests pass;
-5. new feature smoke tests pass;
-6. runtime/build errors have been reviewed;
-7. rollback remains possible.
+Every code phase uses a dedicated branch/worktree/PR. CI, Worker checks where relevant, Vercel Preview and smoke tests are required before merge.
 
 ---
 
 # Git / GitHub working model
 
-## Branches
-
-Use one branch per phase or small vertical slice:
+Use one branch/worktree per implementation phase:
 
 ```text
 agent/living-doc-phase-0
 agent/living-doc-phase-1
-agent/living-doc-phase-2
 ...
+agent/living-doc-artifact-compiler
+agent/living-doc-intelligent-pdf
+agent/living-doc-model-packaging
+agent/living-doc-connected-pdf
 ```
 
-Do not develop Living Document directly on `main`.
-
-## Worktrees
-
-Use a separate worktree for every active implementation branch so parallel work cannot contaminate another phase:
+Example:
 
 ```bash
 git fetch origin
 mkdir -p ../web-terrarium-wt
-
-git worktree add ../web-terrarium-wt/phase-1 -b agent/living-doc-phase-1 origin/main
+git worktree add ../web-terrarium-wt/artifact-compiler \
+  -b agent/living-doc-artifact-compiler origin/main
 ```
 
-For a dependent phase after its prerequisite branch has not merged yet, use an explicitly stacked worktree/branch only when necessary:
-
-```bash
-git worktree add ../web-terrarium-wt/phase-2 -b agent/living-doc-phase-2 agent/living-doc-phase-1
-```
-
-Prefer waiting for the prerequisite PR to merge over building long PR stacks. If a stacked PR is unavoidable, clearly mark its base/dependency and retarget it to `main` after the prerequisite merges.
-
-## Pull requests
-
-- Default implementation PRs to **draft**.
-- Keep PRs phase-sized and reversible.
-- Include `Closes #N` only when that PR actually completes the issue.
-- Include preview validation and smoke-test results in every PR body.
-- Do not enable auto-merge until the feature has stable CI/preview behavior and we explicitly choose to do so.
-
-## Existing PR #1 coordination
-
-PR #1 already changes the AI/memory/continuous-research architecture. Do not duplicate those systems.
-
-For phases that need PR #1 data structures:
-
-1. Prefer starting after #1 merges.
-2. If work must start earlier, branch from `feat/continuous-ai-terrarium` and create a clearly stacked draft PR.
-3. After #1 merges, rebase/retarget the feature to `main` and rerun Preview validation.
+Implementation PRs default to draft. Stacked PRs are allowed only when a dependency genuinely has not merged; they must state their base and be retargeted after the prerequisite merges.
 
 ---
 
-# Proposed architecture
+# Core LivingDocument architecture
 
 ```text
-Open web
-   │
-   ▼
 Research providers
-   │
-   ▼
-ResearchRun ────────────────┐
-   │                        │
-   ▼                        │
-Garden durable state        │
-   │                        │
-   ├─ /garden.json          │
-   ├─ /runs/*               │
-   ├─ /memory.json   (PR #1)│
-   └─ /reports/*     (PR #1)│
-   │                        │
-   ▼                        │
-Document compiler ◄─────────┘
-   │
-   ├─ deterministic projection
-   │
-   └─ validated semantic patches
-   │
-   ▼
+      |
+      v
+ResearchRun / evidence
+      |
+      v
+Garden durable state
+      |
+      +-- /garden.json
+      +-- /runs/*
+      +-- /memory.json
+      +-- /reports/*
+      |
+      v
+Document compiler
+      |
+      +-- deterministic projection
+      +-- validated semantic patches
+      |
+      v
 LivingDocument
-   │
-   ├─ /document.json
-   ├─ /documents/<version>.json or checkpoint strategy
-   └─ patch/change history
-   │
-   ├─────────────┬──────────────┐
-   ▼             ▼              ▼
-Web document     Q&A         PDF export
-/g/.../document  /ask        snapshot
+      |
+      +-- /document.json
+      +-- /documents/<version>.json or checkpoints
+      +-- patch/change history
+      |
+      +------------+-------------+--------------------+
+      |            |             |                    |
+      v            v             v                    v
+Web document      Q&A      Artifact compiler     diff/timeline
+                                   |
+                      +------------+------------+
+                      |                         |
+                      v                         v
+                 Normal PDF              Intelligent PDF
 ```
 
 ---
 
-# Proposed domain model
-
-The exact schema belongs to Phase 1, but the intended shape is:
+# Proposed LivingDocument model
 
 ```ts
 type LivingDocument = {
@@ -218,42 +319,50 @@ type LivingDocument = {
     latestRunAt?: string;
     runIds?: string[];
   };
+  artifactHints?: {
+    preferredCitationStyle?: string;
+    exportableSectionIds?: string[];
+    sensitiveSectionIds?: string[];
+  };
 };
 ```
 
-Findings and questions need stable IDs so later runs can update/retract/resolve them without losing history.
+`artifactHints` are advisory only. Artifact generation still performs its own authorization/redaction and never blindly embeds sensitive/private data.
 
 ---
 
-# Roadmap and issue dependency graph
+# Roadmap and dependency graph
 
 | Phase | Issue | Outcome | Production risk |
 |---|---:|---|---|
 | 0 | #3 | Delivery gates, compatibility and rollback contract | None / docs & checks |
-| 1 | #4 | Versioned LivingDocument model + additive storage | Low |
-| 2 | #5 | Deterministic document compiler | Low |
-| 3 | #6 | Provenance + validated semantic patches | Medium, isolated behind fallback |
-| 4 | #7 | Additive `/g/[slug]/document` experience | Low/medium |
+| 1 | #4 | Versioned LivingDocument + artifact-aware contract | Low |
+| 2 | #5 | Deterministic LivingDocument compiler | Low |
+| 3 | #6 | Provenance + validated semantic patches | Medium, fallback isolated |
+| 4 | #7 | `/g/[slug]/document`, timeline and What Changed | Low/medium |
 | 5 | #8 | Grounded Ask-this-document Q&A | Medium, isolated endpoint |
 | 6 | #9 | Continuous regrowth + meaningful-change detection | Medium |
-| 7 | #10 | Static versioned PDF export | Low, isolated export path |
-| 8 | #11 | Interactive/offline PDF proof of concept | Experimental; not production-critical |
-| 9 | #12 | Security, observability, performance and rollout hardening | Risk reduction |
+| 7 | #10 | General artifact compiler + reproducible normal PDF | Low, explicit export path |
+| 8 | #11 | Intelligent PDF runtime + embedded retrieval | Experimental/isolated |
+| 9 | #36 | Embedded GGUF model packaging + local inference benchmarks | Experimental/isolated |
+| 10 | #37 | Connected Living PDF version-awareness | Experimental/isolated |
+| 11 | #12 | Security, observability, performance and rollout hardening | Risk reduction |
 
-Suggested dependency flow:
+Suggested critical flow:
 
 ```text
-#3
- ↓
-#4
- ↓
-#5 ───────────────► #7 ─► #8 ─► #10 ─► #11
- ↓                    │
-#6 ───────► #9        │
-  └───────────────────┘
+#3 -> #4 -> #5 -> #7 -> #8
+             |
+             +-> #10 -> #11 -> #36 -> #37
+             |
+#6 -> #9 ----+
 
-#12 hardens the production-ready subset before broad rollout.
+#12 hardens whichever subset is approved for production exposure.
 ```
+
+The important change from architecture v1 is:
+
+> **`#10 -> #11 -> #36 -> #37` is a real product/artifact pipeline, not one optional llm.pdf experiment.**
 
 ---
 
@@ -261,253 +370,342 @@ Suggested dependency flow:
 
 ## Phase 0 — delivery safety and compatibility — #3
 
-Goal: define the operational contract before feature code lands.
+Define branch/worktree/PR conventions, backwards-compatible schemas, Vercel Preview gate, smoke tests and rollback procedure.
 
-Deliverables:
+## Phase 1 — LivingDocument and artifact contract — #4
 
-- branch/worktree/PR convention;
-- schema compatibility rules;
-- Vercel Preview validation gate;
-- app + Worker CI expectations;
-- existing-route smoke checklist;
-- rollback/disable strategy.
-
-Exit criterion: later phases can be merged independently without requiring downtime.
-
-## Phase 1 — domain model and storage — #4
-
-Goal: create a versioned, rebuildable document representation.
+Create the versioned rebuildable document representation and define artifact metadata/manifest inputs early enough that later exports do not require a parallel knowledge model.
 
 Likely storage:
 
 ```text
 /document.json
-/documents/<checkpoint-or-version>.json
+/documents/<version-or-checkpoint>.json
 ```
 
-Storage retention must be bounded; we should not store a complete duplicated document forever after every trivial change.
-
-Exit criterion: a Garden may have no document, one document or several versions without affecting legacy reads.
+No artifact bytes are stored as authoritative Garden state.
 
 ## Phase 2 — deterministic compiler — #5
 
-Goal: produce a usable LivingDocument from persisted research without an LLM.
-
-Initial sections:
-
-- Executive summary
-- Current findings
-- Open questions
-- Uncertainty / contradictions
-- Sources
-- Timeline / growth metadata
-
-Exit criterion: same persisted source state produces semantically stable output and works during AI-provider outage.
+Build a useful LivingDocument without an LLM: executive summary, findings, questions, uncertainty, sources and timeline metadata.
 
 ## Phase 3 — semantic evolution — #6
 
-Goal: evolve documents via validated semantic operations rather than complete rewrites.
-
-Important invariant:
-
-> The last valid document is never overwritten until the proposed next version passes schema, provenance and citation validation.
-
-Exit criterion: claims can be added, updated, contradicted and retracted with auditable provenance.
+Introduce validated evidence-backed semantic patches. Invalid AI output leaves the last valid document untouched.
 
 ## Phase 4 — Living Document UI — #7
 
-Goal: expose the document without replacing current Gardens.
-
-New route:
-
-```text
-/g/[slug]/document
-```
-
-Key UX:
-
-- freshness and version;
-- current knowledge;
-- uncertainty;
-- open questions;
-- evidence/source navigation;
-- timeline;
-- **What changed since last visit?**
-
-The browser can store the last viewed version locally and show changes from that version to the current one.
-
-Exit criterion: public users can consume a useful document while `/g/[slug]` remains unchanged.
+Add `/g/[slug]/document` with version/freshness, current knowledge, uncertainty, source navigation, timeline and What Changed.
 
 ## Phase 5 — Ask this document — #8
 
-Goal: query the evolving knowledge state.
-
-```text
-question
-  ↓
-retrieve relevant findings / versions / source evidence
-  ↓
-AI synthesis
-  ↓
-answer + citations + document version
-```
-
-Q&A must fail independently. Rendering the document may never depend on a successful model call.
-
-Exit criterion: answers cite known evidence and explicitly signal insufficient support instead of inventing it.
+Ground server-side answers in LivingDocument findings/versions/source evidence. Q&A remains independent from rendering.
 
 ## Phase 6 — autonomous regrowth — #9
 
-Goal: integrate with PR #1 continuous research/watchlist flow.
+Only meaningful changes generate document evolution/version churn. Duplicate crawler activity does not.
 
-A new research run should not automatically equal a new document version. First classify whether it contains meaningful change:
+## Phase 7 — Artifact compiler and normal PDF — #10
 
-- new evidence;
-- corroboration;
-- contradiction;
-- changed source content;
-- question resolved/opened;
-- confidence shift;
-- duplicate/no-op.
+Build a generic artifact pipeline rather than a PDF-only one-off.
 
-Exit criterion: document history reflects knowledge changes rather than crawler activity noise.
+Proposed modules:
 
-## Phase 7 — static PDF snapshot — #10
+```text
+lib/artifacts/
+  manifest.ts
+  select-content.ts
+  redact.ts
+  build.ts
+  pdf/
+    render.ts
+```
 
-Goal: export an immutable representation of a specific document version.
+Potential endpoint:
 
-Every PDF must include:
+```text
+POST /api/gardens/[slug]/artifacts/pdf
+```
 
-- Garden/document identity;
-- version;
-- generated timestamp;
-- source freshness;
-- citations and source links;
-- canonical live URL.
+Requirements:
 
-Exit criterion: PDF export is reproducible and completely isolated from critical web routes.
+- freeze explicit document version;
+- build artifact manifest;
+- select bounded evidence/source excerpts;
+- apply authorization/redaction;
+- generate reproducible normal PDF;
+- include canonical live URL and version metadata;
+- failure isolated from the live document.
 
-## Phase 8 — interactive/offline PDF — #11
+This phase establishes the artifact input contract later reused by Intelligent PDF.
 
-Goal: test the `llm.pdf`-inspired idea only after the useful product exists.
+## Phase 8 — Intelligent PDF runtime and retrieval — #11
 
-Experiments:
+Implement the self-contained PDF shell before adding an embedded LLM.
 
-- embedded document state;
-- compact local index;
-- PDF JavaScript interaction;
-- local search / retrieval;
-- optional tiny embedded model;
-- online version check when supported;
-- offline fallback to embedded snapshot.
+Target contents:
 
-No arbitrary filesystem access and no embedded credentials.
+```text
+PDF UI
++ living-document snapshot
++ artifact manifest
++ compact search/retrieval index
++ selected source excerpts
++ PDF JavaScript interaction/runtime shell
+```
 
-Exit criterion: documented viewer compatibility, file-size/latency measurements and a go/no-go decision.
+Required behavior:
 
-## Phase 9 — hardening / rollout — #12
+- local search works with no network;
+- “Ask this document” can retrieve useful context even before LLM inference exists;
+- unsupported viewers show a clear compatibility message while document pages remain readable where possible;
+- no filesystem privileges, secrets or arbitrary host access.
 
-Goal: make the feature safe to expose more broadly.
+This phase proves the portable runtime/container and retrieval path independently of model performance.
 
-Focus:
+## Phase 9 — Embedded model packaging and local inference — #36
 
-- private Garden authorization;
-- untrusted source content / prompt injection;
-- secret leakage prevention;
+Add the actual `llm.pdf`-inspired model path.
+
+Build pipeline concept:
+
+```text
+approved GGUF model
+       +
+llama.cpp-compatible runtime
+       |
+ Emscripten / PDF-compatible JS build
+       |
+       v
+artifact packager
+       |
+       +-- model.gguf
+       +-- runtime
+       +-- prompt/policy
+       +-- retrieval adapter
+       v
+Intelligent PDF
+```
+
+The LLM is used only after retrieval. It is not trusted as the evidence store.
+
+Benchmarks must record:
+
+- final PDF size;
+- model size and quantization;
+- startup/load time;
+- first-token latency;
+- tokens/sec or sec/token;
+- peak memory where measurable;
+- answer quality on a frozen document Q&A set;
+- viewer/platform compatibility.
+
+Model profiles should be configurable rather than hard-coded:
+
+```text
+Normal PDF            smallest, no model
+Smart PDF             compact local model
+Smart+ PDF            optional larger model only if benchmarks justify it
+```
+
+No model should be shipped by default until its license, redistribution terms and artifact size are explicitly reviewed.
+
+## Phase 10 — Connected Living PDF — #37
+
+Add optional live-version awareness while preserving offline-first behavior.
+
+Requirements:
+
+- embed non-secret `gardenSlug`, `documentVersion`, `canonicalUrl`;
+- detect a newer live document only through an explicitly supported/safe mechanism;
+- show “new growth available” rather than silently rewriting the PDF;
+- provide See changes / Open latest when supported;
+- never require connectivity;
+- no embedded authentication/API secrets;
+- clearly document viewer/network limitations.
+
+The PDF itself remains an immutable versioned snapshot. “Living” means it can discover that its source Garden has grown, not that it secretly mutates its own bytes.
+
+## Phase 11 — hardening / rollout — #12
+
+Harden the production-ready subset:
+
+- authorization/private Garden exports;
+- source prompt-injection boundaries;
+- artifact redaction and secret scanning;
+- malicious links/content handling;
+- model/runtime supply-chain and redistribution review;
+- PDF active-content security disclosure;
 - Q&A/export abuse controls;
+- artifact size/latency limits;
 - structured observability;
-- document build latency and payload budgets;
-- bounded checkpoint retention;
-- tested disable/rollback procedure.
+- rollback/disable controls.
 
-Exit criterion: we can make Living Document more prominent without making production recovery harder.
+Normal PDF may be approved for production while Intelligent PDF remains experimental. Rollout decisions are independent per artifact class.
+
+---
+
+# Proposed implementation layout
+
+```text
+lib/
+  document/
+    types.ts
+    compile.ts
+    patch.ts
+    diff.ts
+    retrieval.ts
+
+  artifacts/
+    manifest.ts
+    select-content.ts
+    redact.ts
+    build.ts
+    pdf/
+      render.ts
+    intelligent-pdf/
+      build.ts
+      index.ts
+      model-profile.ts
+
+packages/
+  pdf-runtime/
+    retrieval/
+    ui/
+    llama/
+
+app/api/gardens/[slug]/
+  document/
+  ask/
+  artifacts/
+    pdf/
+    intelligent-pdf/
+```
+
+The final paths can change, but the dependency direction must not: artifact code consumes LivingDocument state and never becomes required by core Garden routes.
 
 ---
 
 # Testing and release gates
 
-## Existing-product smoke tests
+## Core regression tests
 
-Every code PR should verify as applicable:
+Every implementation PR verifies applicable existing behavior:
 
 - `/` loads;
-- a known public `/g/[slug]` loads;
-- `/s/[id]` behavior remains unchanged;
-- research submission/fallback behavior still works;
-- Worker `/health` is healthy when Worker changes are involved;
-- private/public Garden visibility behavior is unchanged unless intentionally modified.
+- public `/g/[slug]` loads;
+- `/s/[id]` remains unchanged;
+- research submission/fallback remains usable;
+- Worker health passes when Worker changes are involved;
+- private/public visibility does not regress.
 
-## New feature tests
+## LivingDocument tests
 
-Add cumulatively by phase:
-
-- legacy Garden without document;
-- empty Garden;
-- one-run document;
-- multi-run document;
-- rebuild from source state;
-- invalid AI patch;
+- legacy Garden without a document;
+- empty/one-run/multi-run document;
+- deterministic rebuild;
+- invalid semantic patch;
 - citation mismatch;
 - source contradiction;
 - provider unavailable;
-- document version diff;
-- Q&A with insufficient evidence;
-- PDF generation failure.
+- version diff;
+- Q&A insufficient-evidence behavior.
 
-## Vercel rollout
+## Artifact tests
 
-Normal flow:
+- explicit document version is frozen;
+- artifact manifest matches embedded content;
+- normal PDF is reproducible;
+- artifact generation failure is isolated;
+- private/sensitive content is not exported without authorization;
+- no server/API secrets enter artifact bytes;
+- retrieval-only Intelligent PDF works offline;
+- invalid/missing model degrades to retrieval-only behavior;
+- embedded model answers only supplied retrieved context under the document assistant policy;
+- model/runtime file-size budget is enforced;
+- supported viewer matrix is tested;
+- Connected PDF remains useful when version check/network fails.
+
+## Vercel release flow
 
 ```text
 worktree
-  ↓
-feature branch
-  ↓
-draft PR
-  ↓
-CI
-  ↓
-Vercel Preview
-  ↓
-smoke tests
-  ↓
-ready for review
-  ↓
-merge to main
-  ↓
-production deployment
-  ↓
-post-deploy smoke + runtime error check
+ -> feature branch
+ -> draft PR
+ -> CI
+ -> Vercel Preview
+ -> existing-route smoke
+ -> feature/artifact smoke
+ -> ready for review
+ -> merge
+ -> production
+ -> post-deploy runtime check
 ```
 
-Do not manually deploy a feature branch to production to bypass this path.
+Do not manually promote experimental Intelligent PDF work to production to bypass the normal preview/approval path.
+
+---
+
+# Security boundaries
+
+An Intelligent PDF is active content and must be treated accordingly.
+
+Never embed:
+
+- API keys;
+- Worker internal token;
+- Clerk secrets/session material;
+- crawler credentials;
+- private source material not authorized for export;
+- arbitrary filesystem/network privileges.
+
+Source text and model output remain untrusted. Retrieval references must map to the frozen artifact evidence set.
+
+Connected mode must use only mechanisms supported by the target viewer/environment; generic PDF JavaScript must not be assumed to have unrestricted HTTP/localhost/filesystem access.
+
+---
+
+# Size and performance policy
+
+Artifact generation must expose size before download where practical.
+
+Illustrative target classes, to be validated rather than assumed:
+
+```text
+Normal PDF          few MB
+Smart PDF           tens to low hundreds of MB
+Smart+ PDF          only if explicitly selected and benchmarked
+```
+
+The build pipeline should reject or warn on artifact/model profiles that exceed configured limits. Model selection is a packaging policy, not a Garden-level knowledge decision.
 
 ---
 
 # Rollback strategy
 
-The architecture is intentionally reversible:
-
-1. Existing Garden/Run data remains authoritative.
-2. Document state is a projection and can be deleted/rebuilt if necessary.
-3. UI entry points can be hidden/disabled without touching research storage.
-4. Q&A and PDF endpoints are independent.
-5. A bad document compiler release can be rolled back while persisted runs remain readable.
-6. New storage formats carry explicit schema versions.
+1. Garden/research/evidence stays authoritative.
+2. LivingDocument is rebuildable.
+3. Artifact files are disposable and reproducible from a known version.
+4. Normal PDF, Intelligent PDF and Connected features have independent feature gates.
+5. Q&A/API failures do not affect document rendering.
+6. Intelligent PDF runtime/model failures fall back to normal document content or retrieval-only mode where possible.
+7. Disabling artifact generation never requires a data migration.
 
 ---
 
-# Definition of done for the initiative
+# Definition of done
 
 The initiative is complete when:
 
-- every Garden can have a current versioned LivingDocument;
-- the document can be rebuilt from persisted research evidence;
-- every material claim/change can be traced to evidence;
-- users can see what changed between versions;
-- users can ask grounded questions with citations;
-- watchlist/continuous research can update the document without noisy version churn;
-- a static PDF snapshot can be exported from a known version;
-- interactive PDF feasibility has a measured go/no-go result;
-- existing Web Terrarium routes remain available throughout rollout;
-- rollback does not require a destructive data migration.
+- every Garden can have a versioned rebuildable LivingDocument;
+- material claims/changes are traceable to evidence;
+- users can inspect changes and ask grounded questions;
+- continuous research grows documents without noisy version churn;
+- an artifact compiler freezes an explicit document version;
+- normal PDF export is reproducible and safe;
+- Intelligent PDF works offline with embedded snapshot + retrieval;
+- at least one approved embedded GGUF/local-runtime profile has measured size/latency/quality and documented compatibility;
+- local LLM Q&A is grounded through embedded retrieval rather than model memory;
+- Connected PDF can report newer Garden growth where supported without losing offline usability;
+- no PDF/runtime/model path is required for availability of the core Web Terrarium;
+- rollback remains non-destructive.
