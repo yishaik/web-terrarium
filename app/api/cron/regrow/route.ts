@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { selectContinuousResearchQuery } from "@/lib/continuous-research";
+import { syncLivingDocument } from "@/lib/document/sync";
 import { research } from "@/lib/research";
 import { getActiveGardens, getGardenResearchContext, workerRequest } from "@/lib/worker";
 
@@ -17,6 +18,8 @@ type RegrowResult = {
   query?: string;
   status: "grown" | "skipped" | "failed";
   synthesis?: "ai" | "deterministic";
+  document?: "updated" | "unchanged" | "unavailable";
+  documentVersion?: number;
   error?: string;
 };
 
@@ -51,7 +54,15 @@ export async function GET(request: Request) {
         method: "POST",
         body: JSON.stringify({ ...run, ownerId: garden.ownerId, continuousResearch: true }),
       });
-      results.push({ slug: garden.slug, query, status: "grown", synthesis: run.brief.aiModel ? "ai" : "deterministic" });
+      const document = await syncLivingDocument(garden.slug, garden.ownerId);
+      results.push({
+        slug: garden.slug,
+        query,
+        status: "grown",
+        synthesis: run.brief.aiModel ? "ai" : "deterministic",
+        document: document.status,
+        documentVersion: document.version,
+      });
     } catch (error) {
       results.push({ slug: garden.slug, status: "failed", error: error instanceof Error ? error.message : "Unknown error" });
     }
