@@ -73,6 +73,8 @@ jobs:
           emcmake cmake -S /tmp/llama.cpp -B /tmp/llama-build \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DCMAKE_EXECUTABLE_SUFFIX=.js \
+            -DCMAKE_C_FLAGS="-Oz -mno-simd128 -fno-vectorize -fno-slp-vectorize" \
+            -DCMAKE_CXX_FLAGS="-Oz -mno-simd128 -fno-vectorize -fno-slp-vectorize" \
             -DLLAMA_BUILD_HTML=OFF \
             -DLLAMA_WASM_MEM64=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
@@ -84,6 +86,8 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
             -DGGML_BACKEND_DL=OFF \
+            -DGGML_CPU_REPACK=OFF \
+            -DGGML_LLAMAFILE=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-Oz -sWASM=0 -sSINGLE_FILE=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=1073741824 -sENVIRONMENT=shell -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_main -sEXPORTED_RUNTIME_METHODS=FS,callMain"
           cmake --build /tmp/llama-build --target llama-simple -j2
@@ -94,7 +98,7 @@ jobs:
           RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
           RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
           cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppTag":"b9637","llamaCppCommit":"aedb2a5","llamaCppLicense":"MIT","emscripten":"4.0.10","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false}
+          {"runtime":"llama.cpp-asmjs","llamaCppTag":"b9637","llamaCppCommit":"aedb2a5","llamaCppLicense":"MIT","emscripten":"4.0.10","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"simd":false}
           EOF
           grep -q "callMain" smart-runtime/llama-runtime.js
           test "$RUNTIME_BYTES" -lt 50000000
