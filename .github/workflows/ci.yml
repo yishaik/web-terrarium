@@ -48,10 +48,10 @@ jobs:
     name: Smart PDF llama.cpp runtime
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/living-doc-phase-9'
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Install fastcomp Emscripten and pinned llama.cpp
+      - name: Build pinned JavaScript-only llama.cpp runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -66,12 +66,38 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('/tmp/llama.cpp/CMakeLists.txt')
-          text = path.read_text()
+
+          cmake = Path('/tmp/llama.cpp/CMakeLists.txt')
+          text = cmake.read_text()
           needle = 'add_subdirectory(common)\n'
           if 'add_subdirectory(examples/main)' not in text:
+              if needle not in text:
+                  raise SystemExit('Could not locate common CMake target')
               text = text.replace(needle, needle + 'add_subdirectory(examples/main)\n', 1)
-          path.write_text(text)
+          cmake.write_text(text)
+
+          llama = Path('/tmp/llama.cpp/src/llama.cpp')
+          text = llama.read_text()
+          enum_needle = '    LLM_KV_TOKENIZER_PRE_TYPE_CODESHELL,\n'
+          if 'LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM' not in text:
+              if enum_needle not in text:
+                  raise SystemExit('Could not locate tokenizer enum')
+              text = text.replace(enum_needle, enum_needle + '    LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM,\n', 1)
+              branch_needle = '''        } else if (tokenizer_pre == "codeshell") {\n            pre_type = LLM_KV_TOKENIZER_PRE_TYPE_CODESHELL;\n'''
+              if branch_needle not in text:
+                  raise SystemExit('Could not locate tokenizer pre branch')
+              text = text.replace(branch_needle, branch_needle + '''        } else if (tokenizer_pre == "smollm") {\n            pre_type = LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM;\n''', 1)
+          llama.write_text(text)
+
+          vocab = Path('/tmp/llama.cpp/src/llama-vocab.cpp')
+          text = vocab.read_text()
+          if 'case LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM:' not in text:
+              case_needle = '''        case LLM_KV_TOKENIZER_PRE_TYPE_CODESHELL:\n            regex_exprs = {\n'''
+              if case_needle not in text:
+                  raise SystemExit('Could not locate codeshell tokenizer case')
+              smollm = '''        case LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM:\n            regex_exprs = {\n                "\\\\p{N}",\n                "(?i:'s|'t|'re|'ve|'m|'ll|'d)\\\\b",\n                "[^\\\\r\\\\n\\\\p{L}\\\\p{N}]?[\\\\p{Ll}\\\\p{Lm}\\\\p{Lo}\\\\p{M}]*[\\\\p{Lu}\\\\p{Lt}]?(?:[\\\\p{Lu}\\\\p{Lt}][\\\\p{Ll}\\\\p{Lm}\\\\p{Lo}\\\\p{M}]+|[\\\\p{Lu}\\\\p{Lt}]*[\\\\p{Ll}\\\\p{Lm}\\\\p{Lo}\\\\p{M}]+|[\\\\p{Lu}\\\\p{Lt}]+)|[^\\\\r\\\\n\\\\p{L}\\\\p{N}]?[\\\\p{L}\\\\p{M}]+| ?[^\\\\s\\\\p{L}\\\\p{N}]+[\\\\r\\\\n/]*|\\\\s*[\\\\r\\\\n]+|\\\\s+(?!\\\\S)|\\\\s+",\n            };\n            break;\n'''
+              text = text.replace(case_needle, smollm + case_needle, 1)
+          vocab.write_text(text)
           PY
 
           mkdir -p /tmp/llama-build
@@ -95,11 +121,39 @@ jobs:
           RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
           RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
           cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false}
+          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":true}
           EOF
           grep -q "callMain" smart-runtime/llama-runtime.js
           grep -q "FS" smart-runtime/llama-runtime.js
           test "$RUNTIME_BYTES" -lt 50000000
+
+      - name: Smoke test pinned SmolLM2 model through asm.js runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL=/tmp/SmolLM2-135M-Instruct-Q2_K.gguf
+          curl -L --fail --retry 3 --retry-delay 2 \
+            -o "$MODEL" \
+            'https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q2_K.gguf?download=true'
+          echo '741ad12b64088fedc17c33aacb22e48be1972ef36a39f03666dd68bd15614fb9  /tmp/SmolLM2-135M-Instruct-Q2_K.gguf' | sha256sum -c -
+
+          cat > /tmp/runtime-smoke.js <<'EOF'
+          var WT_OUT=[];
+          var Module={noInitialRun:true,print:function(x){WT_OUT.push(String(x));},printErr:function(x){console.error(String(x));}};
+          var print=Module.print, printErr=Module.printErr;
+          EOF
+          cat smart-runtime/llama-runtime.js >> /tmp/runtime-smoke.js
+          cat >> /tmp/runtime-smoke.js <<'EOF'
+          var fs=require('fs');
+          Module.FS.writeFile('/model.gguf', new Uint8Array(fs.readFileSync('/tmp/SmolLM2-135M-Instruct-Q2_K.gguf')));
+          WT_OUT=[];
+          Module.callMain(['-m','/model.gguf','-n','2','-ngl','0','<|im_start|>user\nSay OK.<|im_end|>\n<|im_start|>assistant\n']);
+          var text=WT_OUT.join('\n');
+          if(!text.trim()){throw new Error('No model output was produced');}
+          console.log('SMART_PDF_SMOKE_OUTPUT=' + text.slice(-500).replace(/\n/g,' '));
+          EOF
+          node --max-old-space-size=4096 /tmp/runtime-smoke.js
+
       - uses: actions/upload-artifact@v4
         with:
           name: smart-pdf-runtime
