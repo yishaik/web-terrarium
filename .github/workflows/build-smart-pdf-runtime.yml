@@ -1,0 +1,81 @@
+name: Build Smart PDF runtime
+
+on:
+  push:
+    branches: [agent/living-doc-phase-9]
+    paths:
+      - .github/workflows/build-smart-pdf-runtime.yml
+      - smart-pdf/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Emscripten SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 4.0.10 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 4.0.10
+          /tmp/emsdk/emsdk activate 4.0.10
+      - name: Build llama.cpp b9637 as JavaScript only
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /tmp/emsdk/emsdk_env.sh
+          git clone --depth 1 --branch b9637 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          emcmake cmake -S /tmp/llama.cpp -B /tmp/llama-build \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DCMAKE_EXECUTABLE_SUFFIX=.js \
+            -DLLAMA_CURL=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-Oz -sWASM=0 -sSINGLE_FILE=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=1073741824 -sENVIRONMENT=shell -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_main -sEXPORTED_RUNTIME_METHODS=FS,callMain"
+          cmake --build /tmp/llama-build --target llama-simple -j2
+          mkdir -p public/smart-pdf
+          cp /tmp/llama-build/bin/llama-simple.js public/smart-pdf/llama-runtime.js
+          test -s public/smart-pdf/llama-runtime.js
+          if find /tmp/llama-build -name '*.wasm' -size +0c | grep -q .; then
+            echo 'Unexpected WebAssembly output: Smart PDF requires JavaScript-only runtime.' >&2
+            exit 1
+          fi
+          RUNTIME_SHA=$(sha256sum public/smart-pdf/llama-runtime.js | cut -d' ' -f1)
+          RUNTIME_BYTES=$(wc -c < public/smart-pdf/llama-runtime.js | tr -d ' ')
+          cat > public/smart-pdf/runtime-manifest.json <<EOF
+          {
+            "runtime": "llama.cpp-asmjs",
+            "llamaCppTag": "b9637",
+            "llamaCppCommit": "aedb2a5",
+            "llamaCppLicense": "MIT",
+            "emscripten": "4.0.10",
+            "sha256": "$RUNTIME_SHA",
+            "bytes": $RUNTIME_BYTES,
+            "wasm": false
+          }
+          EOF
+      - name: Sanity-check generated runtime
+        run: |
+          set -euo pipefail
+          grep -q "callMain" public/smart-pdf/llama-runtime.js
+          grep -q "FS" public/smart-pdf/llama-runtime.js
+          test $(wc -c < public/smart-pdf/llama-runtime.js) -lt 50000000
+      - name: Commit reproducible runtime artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add public/smart-pdf/llama-runtime.js public/smart-pdf/runtime-manifest.json
+          if git diff --cached --quiet; then
+            echo "Runtime artifact is already current."
+            exit 0
+          fi
+          git commit -m "Build pinned Smart PDF llama runtime"
+          git push origin HEAD:agent/living-doc-phase-9
