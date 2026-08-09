@@ -9,6 +9,6 @@ export default async function LivingDocumentExportPage({ params }: { params: Pro
   const loaded = await loadPublicLivingDocument(slug).catch(() => null);
   if (!loaded) notFound();
   const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://web-terrarium.vercel.app").replace(/\/$/, "");
-  const canonicalUrl = `${base}/g/${encodeURIComponent(slug)}/document`;
+  const canonicalUrl = `${base}/g/${encodeURIComponent(slug)}/document?fromArtifactVersion=${loaded.document.documentVersion}`;
   return <ExportClient document={loaded.document} canonicalUrl={canonicalUrl} />;
 }
