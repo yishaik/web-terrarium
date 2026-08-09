@@ -47,60 +47,58 @@ jobs:
   smart-pdf-runtime:
     name: Smart PDF llama.cpp runtime
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/living-doc-phase-9'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Install pinned Emscripten SDK
+      - name: Install fastcomp Emscripten and pinned llama.cpp
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch 4.0.10 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
-          /tmp/emsdk/emsdk install 4.0.10
-          /tmp/emsdk/emsdk activate 4.0.10
-      - name: Build pinned llama.cpp as JavaScript-only runtime
-        shell: bash
-        run: |
-          set -euo pipefail
+          git clone --depth 1 --branch 1.39.20 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 1.39.20-fastcomp
+          /tmp/emsdk/emsdk activate 1.39.20-fastcomp
           source /tmp/emsdk/emsdk_env.sh
-          git clone --depth 1 --branch b9637 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
-          cat >> /tmp/llama.cpp/CMakeLists.txt <<'EOF'
-          if (EMSCRIPTEN)
-            find_package(Threads REQUIRED)
-            add_subdirectory(examples/simple)
-          endif()
-          EOF
-          emcmake cmake -S /tmp/llama.cpp -B /tmp/llama-build \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DCMAKE_EXECUTABLE_SUFFIX=.js \
-            -DCMAKE_C_FLAGS="-Oz -mno-simd128 -fno-vectorize -fno-slp-vectorize" \
-            -DCMAKE_CXX_FLAGS="-Oz -mno-simd128 -fno-vectorize -fno-slp-vectorize" \
-            -DLLAMA_BUILD_HTML=OFF \
-            -DLLAMA_WASM_MEM64=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
+
+          git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp
+          cd /tmp/llama.cpp
+          git reset --hard dd047b4
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/llama.cpp/CMakeLists.txt')
+          text = path.read_text()
+          needle = 'add_subdirectory(common)\n'
+          if 'add_subdirectory(examples/main)' not in text:
+              text = text.replace(needle, needle + 'add_subdirectory(examples/main)\n', 1)
+          path.write_text(text)
+          PY
+
+          mkdir -p /tmp/llama-build
+          cd /tmp/llama-build
+          emcmake cmake /tmp/llama.cpp \
             -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_TOOLS=OFF \
-            -DLLAMA_BUILD_SERVER=OFF \
-            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_CURL=OFF \
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
-            -DGGML_BACKEND_DL=OFF \
-            -DGGML_CPU_REPACK=OFF \
-            -DGGML_LLAMAFILE=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_EXE_LINKER_FLAGS="-Oz -sWASM=0 -sSINGLE_FILE=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=1073741824 -sENVIRONMENT=shell -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_main -sEXPORTED_RUNTIME_METHODS=FS,callMain"
-          cmake --build /tmp/llama-build --target llama-simple -j2
-          mkdir -p smart-runtime
-          cp /tmp/llama-build/bin/llama-simple.js smart-runtime/llama-runtime.js
+            -DBUILD_SHARED_LIBS=OFF
+
+          export EMCC_CFLAGS="-O3 -s SINGLE_FILE=1 -fno-rtti -flto=full -s DISABLE_EXCEPTION_CATCHING=0 -sWASM=0 -Wno-fastcomp -Wabsolute-value -static '-sEXPORTED_FUNCTIONS=[_main]' '-sEXTRA_EXPORTED_RUNTIME_METHODS=[\"FS\",\"callMain\"]' -s FORCE_FILESYSTEM=1 -s INITIAL_MEMORY=1GB -s MAXIMUM_MEMORY=1500MB -s ALLOW_MEMORY_GROWTH -s ASSERTIONS=1"
+          cd examples/main
+          emmake make -j2
+
+          mkdir -p "$GITHUB_WORKSPACE/smart-runtime"
+          cp /tmp/llama-build/bin/llama-cli.js "$GITHUB_WORKSPACE/smart-runtime/llama-runtime.js"
+          cd "$GITHUB_WORKSPACE"
           test -s smart-runtime/llama-runtime.js
-          test ! -s /tmp/llama-build/bin/llama-simple.wasm
           RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
           RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
           cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppTag":"b9637","llamaCppCommit":"aedb2a5","llamaCppLicense":"MIT","emscripten":"4.0.10","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"simd":false}
+          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false}
           EOF
           grep -q "callMain" smart-runtime/llama-runtime.js
+          grep -q "FS" smart-runtime/llama-runtime.js
           test "$RUNTIME_BYTES" -lt 50000000
       - uses: actions/upload-artifact@v4
         with:
