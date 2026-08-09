@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./living-document.module.css";
 
@@ -22,5 +23,6 @@ export function DocumentPresence({ slug, version, changeCount }: { slug: string;
       : lastSeen === null
         ? <span><strong>Live document v{version}</strong> · your first visit to this research artifact</span>
         : <span><strong>You are current</strong> · document v{version} · {changeCount} tracked changes</span>}
+    <Link href={`/g/${encodeURIComponent(slug)}/document/export`} style={{marginInlineStart:"auto",color:"#d9ff86",border:"1px solid rgba(217,255,134,.35)",borderRadius:999,padding:"7px 11px",textDecoration:"none",fontWeight:800,fontSize:".62rem",whiteSpace:"nowrap"}}>Export PDF ↗</Link>
   </div>;
 }
