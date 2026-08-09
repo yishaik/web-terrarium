@@ -1,3 +1,5 @@
+import { synthesizeResearch, type GardenMemoryContext } from "@/lib/ai";
+
 export type Provider = "fastcrw" | "firecrawl";
 
 export type ResearchSource = {
@@ -15,6 +17,11 @@ export type ResearchBrief = {
     takeaway: string;
     points: Array<{ title: string; detail: string }>;
   };
+  citations?: Array<{ claim: string; url: string }>;
+  hypotheses?: string[];
+  nextQuestions?: string[];
+  changeSummary?: string;
+  aiModel?: string;
   newSources?: number;
 };
 
@@ -50,7 +57,7 @@ const demoSources: ResearchSource[] = [
   },
 ];
 
-function buildBrief(query: string, sources: ResearchSource[]): ResearchBrief {
+function buildBrief(query: string, sources: ResearchSource[], newSources?: number): ResearchBrief {
   const domains = [...new Set(sources.map((source) => source.domain))].slice(0, 3);
   const points = sources.slice(0, 3).map((source) => ({ title: source.title, detail: source.description }));
   return {
@@ -61,6 +68,7 @@ function buildBrief(query: string, sources: ResearchSource[]): ResearchBrief {
       takeaway: `What you need to know: the strongest current signal comes from ${domains.join(", ") || "these sources"}. Read the key points below first, then use a follow-up question to narrow the decision or uncertainty that matters to you.`,
       points,
     },
+    newSources,
   };
 }
 
@@ -139,13 +147,45 @@ async function searchFirecrawl(query: string): Promise<ResearchSource[]> {
   return candidates.map(normalize).filter((source): source is ResearchSource => source !== null).slice(0, 6);
 }
 
-export async function research(query: string, provider: Provider, contextQuery?: string): Promise<ResearchRun> {
+export async function research(
+  query: string,
+  provider: Provider,
+  contextQuery?: string,
+  memory?: GardenMemoryContext,
+  aiToken?: string | null,
+): Promise<ResearchRun> {
   const searchQuery = contextQuery ? `${contextQuery} Follow-up question: ${query}`.slice(0, 480) : query;
   const briefTopic = contextQuery ? `${contextQuery}: ${query}` : query;
   try {
     const sources = provider === "fastcrw" ? await searchFastcrw(searchQuery) : await searchFirecrawl(searchQuery);
     if (!sources.length) throw new Error("No sources found");
-    return { query, contextQuery, provider, sources, mode: "live", note: contextQuery ? `Follow-up research for ${contextQuery} just entered the terrarium.` : "Fresh web results just entered the terrarium.", brief: buildBrief(briefTopic, sources) };
+    const previousUrls = new Set(memory?.previousSourceUrls ?? []);
+    const newSources = memory ? sources.filter((source) => !previousUrls.has(source.url)).length : undefined;
+    const fallback = buildBrief(briefTopic, sources, newSources);
+    const aiBrief = await synthesizeResearch({ query, contextQuery, sources, memory, token: aiToken }).catch(() => null);
+    const brief: ResearchBrief = aiBrief ? {
+      headline: aiBrief.headline,
+      summary: aiBrief.summary,
+      highlights: aiBrief.points,
+      executiveSummary: { takeaway: aiBrief.takeaway, points: aiBrief.points },
+      citations: aiBrief.citations,
+      hypotheses: aiBrief.hypotheses,
+      nextQuestions: aiBrief.nextQuestions,
+      changeSummary: aiBrief.changeSummary,
+      aiModel: aiBrief.model,
+      newSources,
+    } : fallback;
+    return {
+      query,
+      contextQuery,
+      provider,
+      sources,
+      mode: "live",
+      note: aiBrief
+        ? (memory ? "Fresh web evidence was compared with this garden's durable memory." : "Fresh web evidence was synthesized by the AI research layer.")
+        : (contextQuery ? `Follow-up research for ${contextQuery} just entered the terrarium.` : "Fresh web results just entered the terrarium."),
+      brief,
+    };
   } catch (error) {
     const missingKey = error instanceof Error && error.message.includes("not configured");
     return {

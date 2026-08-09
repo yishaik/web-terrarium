@@ -19,7 +19,7 @@ export function GardenLauncher({ initialGardens }: { initialGardens: GardenSumma
       const result = await response.json() as { slug?: string; error?: string };
       if (!response.ok || !result.slug) throw new Error(result.error ?? "Could not create your garden.");
       setSlug(result.slug);
-      setGardens((current) => [{ slug: result.slug!, title, visibility, createdAt: new Date().toISOString(), watchlist: [] }, ...current]);
+      setGardens((current) => [{ slug: result.slug!, title, visibility, continuousResearchEnabled: false, createdAt: new Date().toISOString(), watchlist: [] }, ...current]);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create your garden."); }
     finally { setLoading(false); }
   }
@@ -32,6 +32,14 @@ export function GardenLauncher({ initialGardens }: { initialGardens: GardenSumma
     setGardens((current) => current.map((item) => item.slug === garden.slug ? { ...item, visibility: nextVisibility } : item));
   }
 
+  async function setContinuousResearch(garden: GardenSummary, enabled: boolean) {
+    setError("");
+    const response = await fetch(`/api/terrariums/${garden.slug}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ continuousResearchEnabled: enabled }) });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) { setError(result.error ?? "Could not update continuous research."); return; }
+    setGardens((current) => current.map((item) => item.slug === garden.slug ? { ...item, continuousResearchEnabled: enabled } : item));
+  }
+
   return (
     <section className="dashboard-card">
       <strong>Start a public garden</strong>
@@ -41,7 +49,8 @@ export function GardenLauncher({ initialGardens }: { initialGardens: GardenSumma
         <button type="submit" disabled={loading}>{loading ? "Creating…" : "Create garden"}</button>
       </form>
       {slug && <p className="success">Created. <Link href={`/?garden=${slug}`}>Plant its first research seed →</Link> · <Link href={`/g/${slug}`}>Open public garden</Link></p>}
-      {gardens.length > 0 && <div className="garden-list"><p className="eyebrow">YOUR GARDENS</p>{gardens.map((garden) => <div className="garden-row" key={garden.slug}><div><strong>{garden.title}</strong><small>/{garden.slug}{garden.latestRun ? ` · last grow: ${garden.latestRun.query}` : ""}{garden.watchlist?.length ? ` · following ${garden.watchlist.length}` : ""}</small></div><div className="garden-actions"><Link href={`/?garden=${garden.slug}`}>Grow</Link><Link href={`/g/${garden.slug}`}>View</Link><button type="button" className="visibility-button" onClick={() => void setGardenVisibility(garden, garden.visibility === "public" ? "private" : "public")}>{garden.visibility === "public" ? "Public" : "Private"}</button></div></div>)}</div>}
+      {gardens.length > 0 && <div className="garden-list"><p className="eyebrow">YOUR GARDENS</p>{gardens.map((garden) => <div className="garden-row" key={garden.slug}><div><strong>{garden.title}</strong><small>/{garden.slug}{garden.latestRun ? ` · last grow: ${garden.latestRun.query}` : ""}{garden.watchlist?.length ? ` · following ${garden.watchlist.length}` : ""}</small></div><div className="garden-actions"><Link href={`/?garden=${garden.slug}`}>Grow</Link><Link href={`/g/${garden.slug}`}>View</Link><button type="button" className="visibility-button" onClick={() => void setGardenVisibility(garden, garden.visibility === "public" ? "private" : "public")}>{garden.visibility === "public" ? "Public" : "Private"}</button><button type="button" className="visibility-button" onClick={() => void setContinuousResearch(garden, !garden.continuousResearchEnabled)}>{garden.continuousResearchEnabled ? "Auto research on" : "Auto research off"}</button></div></div>)}</div>}
+      {gardens.length > 0 && <p className="action-note">Continuous research is off by default. Enabling it lets scheduled jobs send watched topics, prior garden context, and newly crawled public-web evidence to the configured crawler and AI synthesis layer. This also applies to private gardens, so enable it only when you want that processing.</p>}
       {error && <p className="error">{error}</p>}
     </section>
   );

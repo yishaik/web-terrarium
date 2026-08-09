@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build"
+    "test": "node --experimental-strip-types --test lib/*.test.mts",
+    "check": "npm run test && npm run typecheck && npm run build"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.1",

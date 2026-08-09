@@ -5,6 +5,7 @@ export type Garden = {
   title: string;
   ownerId: string;
   visibility: Visibility;
+  continuousResearchEnabled?: boolean;
   createdAt: string;
   latestRun?: StoredRun;
   history?: StoredRun[];
@@ -17,12 +18,48 @@ export type StoredRun = {
   mode?: "live" | "demo";
   note?: string;
   sources: Array<{ title: string; url: string; description: string; domain: string }>;
-  brief?: { headline: string; summary: string; highlights: Array<{ title: string; detail: string }>; executiveSummary?: { takeaway: string; points: Array<{ title: string; detail: string }> }; newSources?: number };
+  brief?: {
+    headline: string;
+    summary: string;
+    highlights: Array<{ title: string; detail: string }>;
+    executiveSummary?: { takeaway: string; points: Array<{ title: string; detail: string }> };
+    citations?: Array<{ claim: string; url: string }>;
+    hypotheses?: string[];
+    nextQuestions?: string[];
+    changeSummary?: string;
+    aiModel?: string;
+    newSources?: number;
+  };
   recordedAt: string;
 };
 
-export type GardenSummary = Pick<Garden, "slug" | "title" | "visibility" | "createdAt" | "watchlist"> & { latestRun?: Pick<StoredRun, "query" | "recordedAt"> };
+export type GardenMemory = {
+  latestQuery?: string;
+  latestSummary?: string;
+  previousSourceUrls?: string[];
+  watchlist?: string[];
+  hypotheses?: string[];
+  openQuestions?: string[];
+  lastSynthesizedAt?: string;
+  watchTopicCursor?: number;
+  researchCount: number;
+};
 
+export type GardenResearchContext = {
+  garden: Pick<Garden, "slug" | "title" | "ownerId" | "visibility" | "watchlist" | "continuousResearchEnabled">;
+  memory: GardenMemory;
+};
+
+export type ActiveGarden = {
+  slug: string;
+  ownerId: string;
+  continuousResearchEnabled?: boolean;
+  latestQuery?: string;
+  lastRun?: string;
+  watchlist?: string[];
+};
+
+export type GardenSummary = Pick<Garden, "slug" | "title" | "visibility" | "continuousResearchEnabled" | "createdAt" | "watchlist"> & { latestRun?: Pick<StoredRun, "query" | "recordedAt"> };
 export type PopularTopic = { query: string; count: number; lastSeen: string };
 
 function workerBase() {
@@ -49,6 +86,17 @@ export async function getPublicGarden(slug: string): Promise<Garden | null> {
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("Could not load this garden.");
   return response.json() as Promise<Garden>;
+}
+
+export async function getGardenResearchContext(slug: string): Promise<GardenResearchContext> {
+  const response = await workerRequest(`/gardens/${encodeURIComponent(slug)}/context`);
+  return response.json() as Promise<GardenResearchContext>;
+}
+
+export async function getActiveGardens(limit = 1): Promise<ActiveGarden[]> {
+  const response = await workerRequest(`/active-gardens?enabledOnly=1&limit=${Math.max(1, Math.min(limit, 10))}`);
+  const payload = await response.json() as { gardens?: ActiveGarden[] };
+  return payload.gardens ?? [];
 }
 
 export async function getOwnerGardens(ownerId: string): Promise<GardenSummary[]> {
