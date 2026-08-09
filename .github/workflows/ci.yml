@@ -76,9 +76,6 @@ jobs:
               text = text.replace(needle, needle + 'add_subdirectory(examples/main)\n', 1)
           cmake.write_text(text)
 
-          # SmolLM2 declares tokenizer.ggml.pre="smollm". This historical
-          # asm.js-capable llama.cpp predates that metadata label, while its
-          # Qwen2 pre-tokenizer has the compatible single-digit GPT-style split.
           llama = Path('/tmp/llama.cpp/llama.cpp')
           text = llama.read_text()
           branch = '''            } else if (\n                tokenizer_pre == "qwen2") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n'''
@@ -106,11 +103,23 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/smart-runtime"
           cp /tmp/llama-build/bin/llama-cli.js "$GITHUB_WORKSPACE/smart-runtime/llama-runtime.js"
           cd "$GITHUB_WORKSPACE"
+          cat >> smart-runtime/llama-runtime.js <<'EOF'
+          ;(function(){
+            var wtOriginalCallMain = Module.callMain;
+            Module.callMain = function(args) {
+              var next = Array.prototype.slice.call(args || []);
+              if (next.indexOf('-p') < 0 && next.length && String(next[next.length - 1]).charAt(0) !== '-') {
+                next.splice(next.length - 1, 0, '-p');
+              }
+              return wtOriginalCallMain(next);
+            };
+          })();
+          EOF
           test -s smart-runtime/llama-runtime.js
           RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
           RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
           cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":"qwen2-single-digit"}
+          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":"qwen2-single-digit","promptCompat":true}
           EOF
           grep -q "callMain" smart-runtime/llama-runtime.js
           grep -q "FS" smart-runtime/llama-runtime.js
