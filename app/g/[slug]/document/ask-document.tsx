@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import styles from "./living-document.module.css";
+import styles from "./ask-document.module.css";
 
 type Answer = {
   answer: string;
@@ -34,21 +34,21 @@ export function AskDocument({ slug }: { slug: string }) {
     finally { setLoading(false); }
   }
 
-  return <section className={styles.askPanel}>
-    <div className={styles.askIntro}>
+  return <section className={styles.panel}>
+    <div className={styles.intro}>
       <p className={styles.kicker}>ASK THIS DOCUMENT</p>
       <h2>Interrogate the evidence.</h2>
-      <p>Answers are restricted to this document&apos;s persisted findings and source set. If the evidence is thin, the document says so.</p>
+      <p>Answers are restricted to this document&apos;s findings and source set. If the evidence is thin, the document says so.</p>
     </div>
-    <form className={styles.askForm} onSubmit={ask}>
+    <form className={styles.form} onSubmit={ask}>
       <label htmlFor="living-document-question">Question</label>
       <div><input id="living-document-question" maxLength={320} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What changed the strongest conclusion?" disabled={loading} /><button type="submit" disabled={loading || !question.trim()}>{loading ? "Reading evidence…" : "Ask →"}</button></div>
-      {error && <p className={styles.askError} role="alert">{error}</p>}
+      {error && <p className={styles.error} role="alert">{error}</p>}
     </form>
     {answer && <div className={styles.answer}>
       <div className={styles.answerMeta}><span>{answer.coverage}</span><span>v{answer.documentVersion}</span></div>
       <p>{answer.answer}</p>
-      {answer.citations.length > 0 && <div className={styles.answerSources}>{answer.citations.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.id}>{source.domain} ↗</a>)}</div>}
+      {answer.citations.length > 0 && <div className={styles.sources}>{answer.citations.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.id}>{source.domain} ↗</a>)}</div>}
     </div>}
   </section>;
 }
