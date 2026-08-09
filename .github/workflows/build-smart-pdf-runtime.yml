@@ -1,15 +1,10 @@
 name: Build Smart PDF runtime
 
 on:
-  push:
-    branches: [agent/living-doc-phase-9]
-    paths:
-      - .github/workflows/build-smart-pdf-runtime.yml
-      - smart-pdf/**
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-runtime:
@@ -30,52 +25,43 @@ jobs:
           set -euo pipefail
           source /tmp/emsdk/emsdk_env.sh
           git clone --depth 1 --branch b9637 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          cat >> /tmp/llama.cpp/CMakeLists.txt <<'EOF'
+          if (EMSCRIPTEN)
+            find_package(Threads REQUIRED)
+            add_subdirectory(examples/simple)
+          endif()
+          EOF
           emcmake cmake -S /tmp/llama.cpp -B /tmp/llama-build \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DCMAKE_EXECUTABLE_SUFFIX=.js \
+            -DLLAMA_BUILD_HTML=OFF \
+            -DLLAMA_WASM_MEM64=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_BUILD_APP=OFF \
             -DLLAMA_CURL=OFF \
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
+            -DGGML_BACKEND_DL=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-Oz -sWASM=0 -sSINGLE_FILE=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=1073741824 -sENVIRONMENT=shell -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_main -sEXPORTED_RUNTIME_METHODS=FS,callMain"
           cmake --build /tmp/llama-build --target llama-simple -j2
-          mkdir -p public/smart-pdf
-          cp /tmp/llama-build/bin/llama-simple.js public/smart-pdf/llama-runtime.js
-          test -s public/smart-pdf/llama-runtime.js
-          if find /tmp/llama-build -name '*.wasm' -size +0c | grep -q .; then
-            echo 'Unexpected WebAssembly output: Smart PDF requires JavaScript-only runtime.' >&2
-            exit 1
-          fi
-          RUNTIME_SHA=$(sha256sum public/smart-pdf/llama-runtime.js | cut -d' ' -f1)
-          RUNTIME_BYTES=$(wc -c < public/smart-pdf/llama-runtime.js | tr -d ' ')
-          cat > public/smart-pdf/runtime-manifest.json <<EOF
-          {
-            "runtime": "llama.cpp-asmjs",
-            "llamaCppTag": "b9637",
-            "llamaCppCommit": "aedb2a5",
-            "llamaCppLicense": "MIT",
-            "emscripten": "4.0.10",
-            "sha256": "$RUNTIME_SHA",
-            "bytes": $RUNTIME_BYTES,
-            "wasm": false
-          }
+          mkdir -p smart-runtime
+          cp /tmp/llama-build/bin/llama-simple.js smart-runtime/llama-runtime.js
+          test -s smart-runtime/llama-runtime.js
+          test ! -s /tmp/llama-build/bin/llama-simple.wasm
+          RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
+          RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
+          cat > smart-runtime/runtime-manifest.json <<EOF
+          {"runtime":"llama.cpp-asmjs","llamaCppTag":"b9637","llamaCppCommit":"aedb2a5","llamaCppLicense":"MIT","emscripten":"4.0.10","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false}
           EOF
-      - name: Sanity-check generated runtime
-        run: |
-          set -euo pipefail
-          grep -q "callMain" public/smart-pdf/llama-runtime.js
-          grep -q "FS" public/smart-pdf/llama-runtime.js
-          test $(wc -c < public/smart-pdf/llama-runtime.js) -lt 50000000
-      - name: Commit reproducible runtime artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add public/smart-pdf/llama-runtime.js public/smart-pdf/runtime-manifest.json
-          if git diff --cached --quiet; then
-            echo "Runtime artifact is already current."
-            exit 0
-          fi
-          git commit -m "Build pinned Smart PDF llama runtime"
-          git push origin HEAD:agent/living-doc-phase-9
+          grep -q "callMain" smart-runtime/llama-runtime.js
+          grep -q "FS" smart-runtime/llama-runtime.js
+          test "$RUNTIME_BYTES" -lt 50000000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-pdf-runtime
+          path: smart-runtime
+          if-no-files-found: error
