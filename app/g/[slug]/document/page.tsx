@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loadPublicLivingDocument } from "@/lib/document/load";
+import { AskDocument } from "./ask-document";
 import { DocumentPresence } from "./document-presence";
 import styles from "./living-document.module.css";
 
@@ -67,6 +68,8 @@ export default async function LivingDocumentPage({ params }: { params: Promise<{
       <span><b>GENERATED</b> {shortDate(document.generatedAt)}</span>
       <span><b>EVIDENCE HASH</b> {document.basedOn.sourceFingerprint}</span>
     </section>
+
+    <AskDocument slug={slug} />
 
     <div className={styles.contentGrid}>
       <article className={styles.article}>
