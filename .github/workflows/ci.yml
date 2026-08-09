@@ -76,24 +76,16 @@ jobs:
               text = text.replace(needle, needle + 'add_subdirectory(examples/main)\n', 1)
           cmake.write_text(text)
 
+          # SmolLM2 declares tokenizer.ggml.pre="smollm". This historical
+          # asm.js-capable llama.cpp predates that metadata label, while its
+          # Qwen2 pre-tokenizer has the compatible single-digit GPT-style split.
           llama = Path('/tmp/llama.cpp/llama.cpp')
           text = llama.read_text()
-          enum_needle = '    LLM_KV_TOKENIZER_PRE_TYPE_CODESHELL,\n'
-          if 'LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM' not in text:
-              if enum_needle not in text:
-                  raise SystemExit('Could not locate tokenizer enum')
-              text = text.replace(enum_needle, enum_needle + '    LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM,\n', 1)
-
-              branch_needle = '''        } else if (tokenizer_pre == "codeshell") {\n            pre_type = LLM_KV_TOKENIZER_PRE_TYPE_CODESHELL;\n'''
-              if branch_needle not in text:
-                  raise SystemExit('Could not locate tokenizer pre branch')
-              text = text.replace(branch_needle, branch_needle + '''        } else if (tokenizer_pre == "smollm") {\n            pre_type = LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM;\n''', 1)
-
-              case_needle = '''        case LLM_KV_TOKENIZER_PRE_TYPE_CODESHELL:\n            regex_exprs = {\n'''
-              if case_needle not in text:
-                  raise SystemExit('Could not locate codeshell tokenizer case')
-              smollm = '''        case LLM_KV_TOKENIZER_PRE_TYPE_SMOLLM:\n            regex_exprs = {\n                "\\\\p{N}",\n                "(?i:'s|'t|'re|'ve|'m|'ll|'d)\\\\b",\n                "[^\\\\r\\\\n\\\\p{L}\\\\p{N}]?[\\\\p{Ll}\\\\p{Lm}\\\\p{Lo}\\\\p{M}]*[\\\\p{Lu}\\\\p{Lt}]?(?:[\\\\p{Lu}\\\\p{Lt}][\\\\p{Ll}\\\\p{Lm}\\\\p{Lo}\\\\p{M}]+|[\\\\p{Lu}\\\\p{Lt}]*[\\\\p{Ll}\\\\p{Lm}\\\\p{Lo}\\\\p{M}]+|[\\\\p{Lu}\\\\p{Lt}]+)|[^\\\\r\\\\n\\\\p{L}\\\\p{N}]?[\\\\p{L}\\\\p{M}]+| ?[^\\\\s\\\\p{L}\\\\p{N}]+[\\\\r\\\\n/]*|\\\\s*[\\\\r\\\\n]+|\\\\s+(?!\\\\S)|\\\\s+",\n            };\n            break;\n'''
-              text = text.replace(case_needle, smollm + case_needle, 1)
+          branch = '''            } else if (\n                tokenizer_pre == "qwen2") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n'''
+          if 'tokenizer_pre == "smollm"' not in text:
+              if branch not in text:
+                  raise SystemExit('Could not locate qwen2 tokenizer pre branch')
+              text = text.replace(branch, branch + '''            } else if (\n                tokenizer_pre == "smollm") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n''', 1)
           llama.write_text(text)
           PY
 
@@ -118,7 +110,7 @@ jobs:
           RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
           RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
           cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":true}
+          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":"qwen2-single-digit"}
           EOF
           grep -q "callMain" smart-runtime/llama-runtime.js
           grep -q "FS" smart-runtime/llama-runtime.js
