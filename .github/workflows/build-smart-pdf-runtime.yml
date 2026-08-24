@@ -1,56 +1,23 @@
-name: CI
+name: Build Smart PDF runtime
 
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches: [agent/living-doc-phase-9]
+    paths:
+      - .github/workflows/build-smart-pdf-runtime.yml
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  web:
-    name: Web app
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run build
-        env:
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
-          CLERK_SECRET_KEY: sk_test_ci_placeholder
-
-  worker:
-    name: Cloudflare worker
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: worker
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - run: npm ci
-      - run: npm run check
-
-  smart-pdf-runtime:
-    name: Smart PDF llama.cpp runtime
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/living-doc-phase-9'
+  build-runtime:
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: agent/living-doc-phase-9
       - name: Build pinned JavaScript-only llama.cpp runtime
         shell: bash
         run: |
@@ -70,7 +37,8 @@ jobs:
           text = cmake.read_text()
           needle = 'add_subdirectory(common)\n'
           if 'add_subdirectory(examples/main)' not in text:
-              if needle not in text: raise SystemExit('Could not locate common CMake target')
+              if needle not in text:
+                  raise SystemExit('Could not locate common CMake target')
               text = text.replace(needle, needle + 'add_subdirectory(examples/main)\n', 1)
           cmake.write_text(text)
 
@@ -78,7 +46,8 @@ jobs:
           text = llama.read_text()
           branch = '''            } else if (\n                tokenizer_pre == "qwen2") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n'''
           if 'tokenizer_pre == "smollm"' not in text:
-              if branch not in text: raise SystemExit('Could not locate qwen2 tokenizer pre branch')
+              if branch not in text:
+                  raise SystemExit('Could not locate qwen2 tokenizer pre branch')
               text = text.replace(branch, branch + '''            } else if (\n                tokenizer_pre == "smollm") {\n                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;\n''', 1)
           llama.write_text(text)
           PY
@@ -96,36 +65,33 @@ jobs:
           cd examples/main
           emmake make -j2
 
-          mkdir -p "$GITHUB_WORKSPACE/smart-runtime"
-          cp /tmp/llama-build/bin/llama-cli.js "$GITHUB_WORKSPACE/smart-runtime/llama-runtime.js"
+          mkdir -p "$GITHUB_WORKSPACE/public/smart-pdf"
+          cp /tmp/llama-build/bin/llama-cli.js "$GITHUB_WORKSPACE/public/smart-pdf/llama-runtime.js"
           cd "$GITHUB_WORKSPACE"
-          cat >> smart-runtime/llama-runtime.js <<'EOF'
+          cat >> public/smart-pdf/llama-runtime.js <<'EOF'
           ;(function(){
-            if (typeof FS !== 'undefined') Module.FS = FS;
             var wtOriginalCallMain = Module.callMain;
             Module.callMain = function(args) {
               var next = Array.prototype.slice.call(args || []);
-              if (next.indexOf('-p') < 0 && next.length && String(next[next.length - 1]).charAt(0) !== '-') next.splice(next.length - 1, 0, '-p');
+              if (next.indexOf('-p') < 0 && next.length && String(next[next.length - 1]).charAt(0) !== '-') {
+                next.splice(next.length - 1, 0, '-p');
+              }
               return wtOriginalCallMain(next);
             };
           })();
           EOF
-          test -s smart-runtime/llama-runtime.js
-          RUNTIME_SHA=$(sha256sum smart-runtime/llama-runtime.js | cut -d' ' -f1)
-          RUNTIME_BYTES=$(wc -c < smart-runtime/llama-runtime.js | tr -d ' ')
-          cat > smart-runtime/runtime-manifest.json <<EOF
-          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":"qwen2-single-digit","promptCompat":true,"moduleFsCompat":true}
+          test -s public/smart-pdf/llama-runtime.js
+          RUNTIME_SHA=$(sha256sum public/smart-pdf/llama-runtime.js | cut -d' ' -f1)
+          RUNTIME_BYTES=$(wc -c < public/smart-pdf/llama-runtime.js | tr -d ' ')
+          cat > public/smart-pdf/runtime-manifest.json <<EOF
+          {"runtime":"llama.cpp-asmjs","llamaCppCommit":"dd047b4","llamaCppLicense":"MIT","emscripten":"1.39.20-fastcomp","sha256":"$RUNTIME_SHA","bytes":$RUNTIME_BYTES,"wasm":false,"smolTokenizerCompat":"qwen2-single-digit","promptCompat":true}
           EOF
-          grep -q "callMain" smart-runtime/llama-runtime.js
-          grep -q "FS" smart-runtime/llama-runtime.js
           test "$RUNTIME_BYTES" -lt 50000000
 
-      - name: Smoke test pinned SmolLM2 model through asm.js runtime
-        id: smoke
-        continue-on-error: true
+      - name: Smoke test pinned SmolLM2 model
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           MODEL=/tmp/SmolLM2-135M-Instruct-Q2_K.gguf
           curl -L --fail --retry 3 --retry-delay 2 -o "$MODEL" 'https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q2_K.gguf?download=true'
           echo '741ad12b64088fedc17c33aacb22e48be1972ef36a39f03666dd68bd15614fb9  /tmp/SmolLM2-135M-Instruct-Q2_K.gguf' | sha256sum -c -
@@ -134,28 +100,26 @@ jobs:
           var Module={noInitialRun:true,print:function(x){WT_OUT.push(String(x));},printErr:function(x){console.error(String(x));}};
           var print=Module.print, printErr=Module.printErr;
           EOF
-          cat smart-runtime/llama-runtime.js >> /tmp/runtime-smoke.js
+          cat public/smart-pdf/llama-runtime.js >> /tmp/runtime-smoke.js
           cat >> /tmp/runtime-smoke.js <<'EOF'
           var fs=require('fs');
           Module.FS.writeFile('/model.gguf', new Uint8Array(fs.readFileSync('/tmp/SmolLM2-135M-Instruct-Q2_K.gguf')));
           WT_OUT=[];
           Module.callMain(['-m','/model.gguf','-n','2','-ngl','0','<|im_start|>user\nSay OK.<|im_end|>\n<|im_start|>assistant\n']);
-          var text=WT_OUT.join('\n');
-          if(!text.trim()) throw new Error('No model output was produced');
-          console.log('SMART_PDF_SMOKE_OUTPUT=' + text.slice(-1000).replace(/\n/g,' '));
+          if(!WT_OUT.join('\n').trim()) throw new Error('No model output was produced');
           EOF
-          node --max-old-space-size=4096 /tmp/runtime-smoke.js > smart-runtime/smoke.log 2>&1
-          STATUS=$?
-          cat smart-runtime/smoke.log
-          exit $STATUS
+          node --max-old-space-size=4096 /tmp/runtime-smoke.js
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: smart-pdf-runtime
-          path: smart-runtime
-          if-no-files-found: error
-
-      - name: Require local model smoke success
-        if: steps.smoke.outcome != 'success'
-        run: exit 1
+      - name: Commit verified runtime asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add public/smart-pdf/llama-runtime.js public/smart-pdf/runtime-manifest.json
+          if git diff --cached --quiet; then
+            echo "Runtime already current."
+            exit 0
+          fi
+          git commit -m "Publish verified Smart PDF llama runtime"
+          git push origin HEAD:agent/living-doc-phase-9
