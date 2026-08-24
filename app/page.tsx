@@ -129,7 +129,7 @@ function Terrarium() {
       <div className="map-column">
         <div className="map-heading"><div><p className="eyebrow">LIVING SOURCE MAP</p><h2>{run.brief.headline}</h2></div><button type="button" className="reading-link" onClick={() => { setPanel("brief"); document.querySelector(".field-notes")?.scrollIntoView({ behavior: "smooth" }); }}>Open reading brief</button></div>
         <div className="terrarium-map">
-          <Image src="/assets/research-terrarium-map.png" alt="A glass terrarium where numbered leaves represent research findings and their sources" width={1619} height={971} priority />
+          <Image src="/assets/research-terrarium-map.webp" alt="A glass terrarium where numbered leaves represent research findings and their sources" width={1619} height={971} priority />
           {findings.map((finding, index) => <button
             key={`${finding.title}-${index}`}
             type="button"
