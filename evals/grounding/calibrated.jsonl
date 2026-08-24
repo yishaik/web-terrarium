@@ -1,0 +1,20 @@
+{"id":"g01","judge":"supported","human":"supported","text":"exact enrollment and duration"}
+{"id":"g02","judge":"revise","human":"revise","text":"correlation rewritten as causation and metric swap"}
+{"id":"g03","judge":"supported","human":"supported","text":"exact request count"}
+{"id":"g04","judge":"revise","human":"revise","text":"wrong request count"}
+{"id":"g05","judge":"revise","human":"revise","text":"may rewritten as definitive"}
+{"id":"g06","judge":"supported","human":"supported","text":"date arithmetic"}
+{"id":"g07","judge":"revise","human":"revise","text":"recommendation absent from evidence"}
+{"id":"g08","judge":"revise","human":"revise","text":"entity swap: Northwind result attributed to Contoso"}
+{"id":"g09","judge":"supported","human":"supported","text":"consultation status paraphrase"}
+{"id":"g10","judge":"supported","human":"supported","text":"absolute latency improvement"}
+{"id":"g11","judge":"supported","human":"revise","text":"incorrect percentage calculation"}
+{"id":"g12","judge":"revise","human":"revise","text":"roadmap target rewritten as a promise"}
+{"id":"g13","judge":"supported","human":"supported","text":"exact test result"}
+{"id":"g14","judge":"revise","human":"revise","text":"tests generalized to bug-free product"}
+{"id":"g15","judge":"supported","human":"supported","text":"bounded synthesis preserves populations"}
+{"id":"g16","judge":"revise","human":"revise","text":"sample generalized to all buyers"}
+{"id":"g17","judge":"supported","human":"supported","text":"incident duration arithmetic"}
+{"id":"g18","judge":"supported","human":"supported","text":"free tier paraphrase preserves limit"}
+{"id":"g19","judge":"revise","human":"revise","text":"no significance rewritten as equivalence"}
+{"id":"g20","judge":"supported","human":"supported","text":"exclusion paraphrase"}

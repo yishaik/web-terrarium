@@ -2,7 +2,9 @@
 
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Image from "next/image";
 import type { Provider, ResearchRun } from "@/lib/research";
+import { mapBriefToSources } from "@/lib/source-map";
 import { AccountControls } from "@/components/account-controls";
 
 type Topic = { query: string; count: number; lastSeen: string };
@@ -18,11 +20,6 @@ const starter: ResearchRun = {
     { title: "Let an agent keep the field notes", url: "#", description: "Cloudflare Computer preserves each saved run in a durable workspace.", domain: "agent memory" },
   ],
 };
-
-function leafClass(index: number, source: ResearchRun["sources"][number], fresh: number | undefined) {
-  const strong = /github\.com|docs\.|arxiv\.org|openai\.com|cloudflare\.com|vercel\.com/.test(source.domain);
-  return `leaf leaf-${(index % 5) + 1} ${strong ? "leaf-strong" : "leaf-soft"} ${fresh && index < fresh ? "leaf-fresh" : ""}`;
-}
 
 function formatWhen(value?: string) {
   if (!value) return "just now";
@@ -47,8 +44,10 @@ function Terrarium() {
   const [shareState, setShareState] = useState<"idle" | "sharing" | "copied">("idle");
   const [watchState, setWatchState] = useState("");
   const [followUp, setFollowUp] = useState("");
+  const [selectedFinding, setSelectedFinding] = useState(0);
 
-  const canopy = useMemo(() => run.sources.slice(0, 6), [run.sources]);
+  const findings = useMemo(() => mapBriefToSources(run.brief, run.sources), [run]);
+  const activeFinding = findings[Math.min(selectedFinding, Math.max(0, findings.length - 1))];
 
   useEffect(() => {
     try {
@@ -57,6 +56,8 @@ function Terrarium() {
     } catch { /* Recent searches are a convenience, never a blocker. */ }
     fetch("/api/topics").then((response) => response.json()).then((payload: { topics?: Topic[] }) => setPopular(payload.topics ?? [])).catch(() => undefined);
   }, []);
+
+  useEffect(() => setSelectedFinding(0), [run.query, run.recordedAt]);
 
   function remember(nextRun: ResearchRun) {
     setRecent((current) => {
@@ -114,23 +115,50 @@ function Terrarium() {
     <nav className="top-nav"><a className="wordmark" href="/">WT</a><div><span className="nav-caption">PUBLIC RESEARCH GARDENS</span><AccountControls /></div></nav>
     <section className="hero">
       <p className="eyebrow">PERSONAL RESEARCH HABITAT · V0.2</p>
-      <h1>Web<br /><em>Terrarium</em></h1>
+      <h1>Web <em>Terrarium</em></h1>
       <p className="intro">A quiet, living place for web research. Plant a curiosity and let it grow into a brief, a source map, and a trail you can return to.</p>
       {gardenSlug && <p className="garden-context">Growing into public garden: <strong>{gardenSlug}</strong></p>}
       <form onSubmit={plant} className="seed-form">
-        <label htmlFor="seed">What should grow here?</label>
-        <div className="form-row"><input id="seed" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="AI video tools, a URL, or any question" maxLength={240} /><select aria-label="Crawler" value={provider} onChange={(event) => setProvider(event.target.value as Provider)}><option value="fastcrw">fastCRW</option><option value="firecrawl">Firecrawl</option></select><button type="submit" disabled={loading}>{loading ? "Growing..." : "Plant seed"}</button></div>
+        <label htmlFor="seed">What do you want to understand?</label>
+        <div className="form-row"><input id="seed" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask a question, compare options, or paste a URL" maxLength={240} /><select aria-label="Crawler" value={provider} onChange={(event) => setProvider(event.target.value as Provider)}><option value="fastcrw">fastCRW</option><option value="firecrawl">Firecrawl</option></select><button type="submit" disabled={loading}>{loading ? "Growing..." : "Plant research"}</button></div>
         {error && <p className="error" role="alert">{error}</p>}
       </form>
     </section>
 
-    <section className="habitat" aria-label="Research terrarium">
-      <div className="glass-reflection" /><div className="sun" /><div className="soil" /><div className="stem stem-a" /><div className="stem stem-b" /><div className="stem stem-c" />
-      {canopy.map((source, index) => <div className={leafClass(index, source, run.brief.newSources)} key={`${source.url}-${index}`} title={`${source.domain}${run.brief.newSources && index < run.brief.newSources ? " · new since last run" : ""}`}><span>{index + 1}</span></div>)}
-      <div className="creature" aria-hidden="true">●</div>
-      <div className="jar-label"><span>SEED</span><strong>{run.query}</strong><small>{run.sources.length} sources · {run.mode === "live" ? "live web" : "starter habitat"}</small></div>
+    <section className="research-workspace" aria-label="Interactive research map">
+      <div className="map-column">
+        <div className="map-heading"><div><p className="eyebrow">LIVING SOURCE MAP</p><h2>{run.brief.headline}</h2></div><button type="button" className="reading-link" onClick={() => { setPanel("brief"); document.querySelector(".field-notes")?.scrollIntoView({ behavior: "smooth" }); }}>Open reading brief</button></div>
+        <div className="terrarium-map">
+          <Image src="/assets/research-terrarium-map.png" alt="A glass terrarium where numbered leaves represent research findings and their sources" width={1619} height={971} priority />
+          {findings.map((finding, index) => <button
+            key={`${finding.title}-${index}`}
+            type="button"
+            className={`finding-hotspot finding-hotspot-${index + 1} ${finding.evidenceStatus}${selectedFinding === index ? " active" : ""}`}
+            aria-label={`Open finding ${index + 1}: ${finding.title}`}
+            aria-pressed={selectedFinding === index}
+            onClick={() => setSelectedFinding(index)}
+          />)}
+        </div>
+        <div className="map-legend" aria-label="Evidence status legend"><span><i className="legend-linked" /> evidence linked</span><span><i className="legend-review" /> numeric review needed</span><span><i className="legend-source" /> citation needed</span></div>
+      </div>
+
+      <aside className="finding-panel" aria-live="polite">
+        {activeFinding ? <>
+          <p className="eyebrow">FINDING</p>
+          <h2>Finding {Math.min(selectedFinding + 1, findings.length)}</h2>
+          <span className={`evidence-state ${activeFinding.evidenceStatus}`}>{activeFinding.evidenceStatus === "review" ? "Check calculation" : activeFinding.evidenceStatus === "linked" ? "Evidence linked" : "Citation needed"}</span>
+          <h3>{activeFinding.title}</h3>
+          <p className="finding-detail">{activeFinding.detail}</p>
+          <details className="kappa-disclosure">
+            <summary><span>Kappa judge calibration</span><strong>κ 0.90</strong></summary>
+            <div><p><strong>19/20</strong> agreement with frozen human labels on the current calibration set.</p><p>Kappa does not certify this individual claim. It measures whether the automated grounding judge agrees with human review.</p><p className="kappa-warning">Known weakness: numeric calculations still need deterministic validation.</p><a href="https://github.com/yishaik/web-terrarium/tree/main/evals/grounding" target="_blank" rel="noreferrer">See the evaluation cases</a></div>
+          </details>
+          <section className="finding-source"><p className="eyebrow">PRIMARY SOURCE</p><strong>{activeFinding.sources[0]?.title ?? "No matching citation"}</strong><p>{activeFinding.sources[0]?.description ?? "This synthesized finding was not linked to a supplied source citation. Treat it as unverified until the evidence is repaired."}</p>{activeFinding.sources[0]?.url && activeFinding.sources[0].url !== "#" && <a href={activeFinding.sources[0].url} target="_blank" rel="noreferrer">View source</a>}</section>
+          {activeFinding.sources.length > 1 && <section className="related-sources"><p className="eyebrow">OTHER LINKED SOURCES</p>{activeFinding.sources.slice(1, 4).map((source, index) => <div key={`${source.url}-${index}`}><span>{index + 2}</span><p><strong>{source.title}</strong><small>{source.domain}</small></p></div>)}</section>}
+          <section className="trust-note"><p className="eyebrow">WHY THIS STATUS</p><p>{activeFinding.evidenceStatus === "uncited" ? "No citation returned by the synthesis layer matches this finding, so the map does not invent a connection." : "The finding is connected only to matching citation URLs returned in this research run. That traceability is separate from automated judge calibration."}</p></section>
+        </> : <p>No findings are available yet.</p>}
+      </aside>
     </section>
-    <div className="ecosystem-key"><span><i className="key-fresh" /> new branch</span><span><i className="key-strong" /> primary / technical source</span><span><i className="key-soft" /> discovered source</span></div>
 
     <section className="field-notes">
       <div className="notes-heading"><div><p className="eyebrow">FIELD NOTES</p><div className="panel-tabs" role="tablist"><button className={panel === "brief" ? "active" : ""} onClick={() => setPanel("brief")} type="button">Reading guide</button><button className={panel === "recent" ? "active" : ""} onClick={() => setPanel("recent")} type="button">Recent</button><button className={panel === "popular" ? "active" : ""} onClick={() => setPanel("popular")} type="button">Popular</button></div></div><p>{run.note}</p></div>

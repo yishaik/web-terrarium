@@ -1,0 +1,22 @@
+[
+  {"id":"g01","evidence":["The trial enrolled 120 participants and ran for eight weeks."],"claim":"The eight-week trial enrolled 120 participants.","human":"supported"},
+  {"id":"g02","evidence":["Teams using the checklist reported 18% fewer review comments."],"claim":"The checklist caused an 18% reduction in production defects.","human":"revise"},
+  {"id":"g03","evidence":["The service processed 2.4 million requests in May."],"claim":"The service processed 2.4 million requests in May.","human":"supported"},
+  {"id":"g04","evidence":["The service processed 2.4 million requests in May."],"claim":"The service processed 2.8 million requests in May.","human":"revise"},
+  {"id":"g05","evidence":["The authors say the effect may be explained by selection bias."],"claim":"Selection bias definitively explains the effect.","human":"revise"},
+  {"id":"g06","evidence":["The API became generally available on 4 March.","The migration guide was published on 7 March."],"claim":"The migration guide appeared three days after general availability.","human":"supported"},
+  {"id":"g07","evidence":["The report covers latency, availability, and cost."],"claim":"The report recommends Kubernetes for all deployments.","human":"revise"},
+  {"id":"g08","evidence":["Northwind increased revenue by 12%.","Contoso reduced churn by 4%."],"claim":"Contoso increased revenue by 12%.","human":"revise"},
+  {"id":"g09","evidence":["The regulator opened consultation and has not adopted a final rule."],"claim":"The proposal remains under consultation.","human":"supported"},
+  {"id":"g10","evidence":["Median response time fell from 400 ms to 250 ms."],"claim":"Median response time improved by 150 ms.","human":"supported"},
+  {"id":"g11","evidence":["Median response time fell from 400 ms to 250 ms."],"claim":"Median response time improved by 60%. ","human":"revise"},
+  {"id":"g12","evidence":["The roadmap targets a beta release in October; dates may change."],"claim":"The beta will ship in October.","human":"revise"},
+  {"id":"g13","evidence":["All 19 contract tests passed on Node 24."],"claim":"Nineteen contract tests passed on Node 24.","human":"supported"},
+  {"id":"g14","evidence":["All 19 contract tests passed on Node 24."],"claim":"The entire product is bug-free.","human":"revise"},
+  {"id":"g15","evidence":["Source A measured a 9% increase.","Source B measured an 11% increase in a different population."],"claim":"The two sources observed increases between 9% and 11% in different populations.","human":"supported"},
+  {"id":"g16","evidence":["The survey sampled current paying customers."],"claim":"The survey represents all potential buyers.","human":"revise"},
+  {"id":"g17","evidence":["The incident began at 10:05 UTC and service recovered at 10:47 UTC."],"claim":"The incident lasted 42 minutes.","human":"supported"},
+  {"id":"g18","evidence":["The free tier permits 100 runs per day."],"claim":"Users can run the service without charge, subject to a daily limit.","human":"supported"},
+  {"id":"g19","evidence":["No statistically significant difference was detected."],"claim":"The two treatments are equivalent.","human":"revise"},
+  {"id":"g20","evidence":["The dataset excludes deleted accounts."],"claim":"Deleted accounts are not represented in the dataset.","human":"supported"}
+]

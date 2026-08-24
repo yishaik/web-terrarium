@@ -43,3 +43,21 @@ vercel
 ```
 
 Add crawler keys and (optionally) `AGENT_WORKER_URL` in the Vercel project environment settings, then deploy again.
+
+## Judge calibration case study
+
+The grounding judge is evaluated outside the user request path. The frozen gold set in
+`evals/grounding/` covers exact support, entity swaps, numerical errors, causation,
+uncertainty, population scope, and unsupported generalization. This keeps the quality gate
+measurable instead of asking an LLM whether another LLM "looks good."
+
+Install [Kappa](https://github.com/yishaik/kappa), then reproduce the reports:
+
+```bash
+python -m pip install git+https://github.com/yishaik/kappa.git
+npm run eval:kappa
+```
+
+The command lints the calibrated judge prompt, scores baseline and calibrated outputs
+against the same reference labels, writes self-contained HTML reports, and fails when
+agreement drifts materially.

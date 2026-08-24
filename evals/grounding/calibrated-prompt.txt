@@ -1,0 +1,13 @@
+Evaluate every claim against only the supplied evidence.
+
+Use this explicit binary rubric / scale: `supported` or `revise`.
+
+For each case, first check these dimensions separately:
+1. entity and time period match;
+2. numbers and calculations are exact;
+3. certainty is not stronger than the evidence;
+4. correlation is not rewritten as causation;
+5. scope is not generalized beyond the sampled population;
+6. no material assertion is absent from the evidence.
+
+Label `supported` only when the whole claim follows from the evidence. Label `revise` if any material part is unsupported, contradicted, overstated, or swaps an entity, metric, population, or time period. Do not favor longer or more verbose claims; concise and verbose claims are judged equally. Cite the failing dimension internally before deciding, but return only the requested labels.
