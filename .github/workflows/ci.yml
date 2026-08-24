@@ -22,7 +22,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
-      - run: curl --fail --silent --show-error https://raw.githubusercontent.com/yishaik/kappa/main/kappa.py --output /tmp/kappa
+      - run: curl --fail --silent --show-error https://raw.githubusercontent.com/yishaik/kappa/master/kappa.py --output /tmp/kappa
       - run: chmod +x /tmp/kappa
       - run: KAPPA_BIN=/tmp/kappa npm run eval:kappa
       - run: npm run build
