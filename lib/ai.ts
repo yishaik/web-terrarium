@@ -122,7 +122,10 @@ export async function synthesizeResearch({
     cache: "no-store",
   });
 
-  if (!response.ok) return null;
+  if (!response.ok) {
+    console.warn("AI Gateway synthesis failed", { status: response.status, model });
+    return null;
+  }
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const content = payload.choices?.[0]?.message?.content;
   if (!content) return null;
