@@ -1,5 +1,6 @@
 export const LIVING_DOCUMENT_SCHEMA_VERSION = 1 as const;
 export const ARTIFACT_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const WORKER_CONTRACT_VERSION = "living-document-v1" as const;
 
 export type ConfidenceBand = "high" | "medium" | "low";
 export type FindingStatus = "current" | "contested" | "retracted";
