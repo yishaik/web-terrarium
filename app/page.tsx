@@ -21,6 +21,20 @@ const starter: ResearchRun = {
   ],
 };
 
+const example: ResearchRun = {
+  query: "How does a web research garden work?", provider: "fastcrw", mode: "demo",
+  note: "Interactive example. These hand-picked links demonstrate the map; no live search was run.",
+  brief: { headline: "Explore the pieces of a research garden", summary: "Six illustrative sources across three websites. Dashed branches connect pages from the same website.", highlights: [], executiveSummary: { takeaway: "Select a numbered leaf to inspect a source. Pages from the same website share a dashed connection; this does not establish agreement between their claims.", points: [] } },
+  sources: [
+    { title: "Build an accessible web", url: "https://developer.mozilla.org/en-US/docs/Web/Accessibility", domain: "developer.mozilla.org", description: "MDN's accessibility guide introduces ways to make web content usable by more people. A starting point for designing the garden's controls." },
+    { title: "Describe the web with HTML", url: "https://developer.mozilla.org/en-US/docs/Web/HTML", domain: "developer.mozilla.org", description: "MDN's HTML documentation explains the structure and meaning of web content. This source shares a website with source 01." },
+    { title: "Turn an interface into components", url: "https://react.dev/learn", domain: "react.dev", description: "React's learning guide introduces components and interactions. The terrarium uses components to turn search results into selectable leaves." },
+    { title: "Keep track of a selection", url: "https://react.dev/learn/managing-state", domain: "react.dev", description: "React's state guide explains how an interface remembers interactions, such as the leaf you selected and the excerpt shown below it." },
+    { title: "Persist a research garden", url: "https://developers.cloudflare.com/durable-objects/", domain: "developers.cloudflare.com", description: "Cloudflare documents Durable Objects, a building block for coordinating state. The project's optional worker stores garden runs and history." },
+    { title: "Store the garden's history", url: "https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/", domain: "developers.cloudflare.com", description: "Cloudflare's storage guide describes persistence for Durable Objects. It belongs to the same website as source 05." },
+  ],
+};
+
 function formatWhen(value?: string) {
   if (!value) return "just now";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
@@ -45,6 +59,7 @@ function Terrarium() {
   const [watchState, setWatchState] = useState("");
   const [followUp, setFollowUp] = useState("");
   const [selectedFinding, setSelectedFinding] = useState(0);
+  const [selectedSource, setSelectedSource] = useState<number | null>(null);
 
   const findings = useMemo(() => mapBriefToSources(run.brief, run.sources), [run]);
   const activeFinding = findings[Math.min(selectedFinding, Math.max(0, findings.length - 1))];
@@ -73,7 +88,7 @@ function Terrarium() {
       const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: nextQuery, provider, gardenSlug: gardenSlug || undefined, contextQuery }) });
       const payload = await response.json() as ResearchRun & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Could not plant this seed.");
-      setQuery(nextQuery); setRun(payload); remember(payload); setPanel("brief");
+      setQuery(nextQuery); setRun(payload); setSelectedSource(null); remember(payload); setPanel("brief");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not plant this seed."); }
     finally { setLoading(false); }
   }
@@ -114,8 +129,8 @@ function Terrarium() {
   return <main>
     <nav className="top-nav"><a className="wordmark" href="/">WT</a><div><span className="nav-caption">PUBLIC RESEARCH GARDENS</span><AccountControls /></div></nav>
     <section className="hero">
-      <p className="eyebrow">PERSONAL RESEARCH HABITAT · V0.2</p>
-      <h1>Web <em>Terrarium</em></h1>
+      <p className="eyebrow">PERSONAL RESEARCH HABITAT · V0.3</p>
+      <h1>Web<br /><em>Terrarium</em></h1>
       <p className="intro">A quiet, living place for web research. Plant a curiosity and let it grow into a brief, a source map, and a trail you can return to.</p>
       {gardenSlug && <p className="garden-context">Growing into public garden: <strong>{gardenSlug}</strong></p>}
       <form onSubmit={plant} className="seed-form">
@@ -123,6 +138,7 @@ function Terrarium() {
         <div className="form-row"><input id="seed" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask a question, compare options, or paste a URL" maxLength={240} /><select aria-label="Crawler" value={provider} onChange={(event) => setProvider(event.target.value as Provider)}><option value="fastcrw">fastCRW</option><option value="firecrawl">Firecrawl</option></select><button type="submit" disabled={loading}>{loading ? "Growing..." : "Plant research"}</button></div>
         {error && <p className="error" role="alert">{error}</p>}
       </form>
+      <button type="button" className="try-example" disabled={loading} onClick={() => { setRun(example); setQuery(example.query); setSelectedSource(0); setPanel("brief"); setError(""); setShareState("idle"); setWatchState(""); }}>Explore an example garden <span aria-hidden="true">↗</span></button>
     </section>
 
     <section className="research-workspace" aria-label="Interactive research map">
@@ -167,9 +183,9 @@ function Terrarium() {
         <section className="executive-summary"><p className="eyebrow">EXECUTIVE SUMMARY</p><h3>What you need to know</h3><p>{run.brief.executiveSummary.takeaway}</p>{run.brief.executiveSummary.points.length > 0 && <ol>{run.brief.executiveSummary.points.map((point, index) => <li key={`${point.title}-${index}`}><strong>{point.title}</strong><span>{point.detail}</span></li>)}</ol>}</section>
         <form className="follow-up-form" onSubmit={askFollowUp}><label htmlFor="follow-up">Ask a follow-up question</label><div><input id="follow-up" value={followUp} onChange={(event) => setFollowUp(event.target.value)} placeholder="What matters most for a small team?" maxLength={180} disabled={loading} /><button type="submit" disabled={loading || !followUp.trim()}>{loading ? "Researching..." : "Ask"}</button></div><small>It will research this question in the context of: {run.contextQuery ?? run.query}</small></form>
         <div className="run-actions"><button type="button" className="secondary-button" onClick={() => void shareRun()} disabled={shareState === "sharing"}>{shareState === "copied" ? "Link copied" : shareState === "sharing" ? "Creating link..." : "Share this result"}</button>{gardenSlug && <button type="button" className="text-button" onClick={() => void watchTopic()}>Follow this topic</button>}{watchState && <span className="action-note">{watchState}</span>}</div>
-        <ol className="source-list">{run.sources.map((source, index) => <li key={`${source.url}-${index}`}><span className="number">0{index + 1}</span><div><a href={source.url} target={source.url === "#" ? undefined : "_blank"} rel="noreferrer">{source.title}</a><p>{source.description}</p></div><span className="domain">{source.domain}</span></li>)}</ol>
+        <ol className="source-list">{run.sources.map((source, index) => <li className={selectedSource === index ? "source-row-selected" : ""} key={`${source.url}-${index}`}><button type="button" className="number source-select" aria-label={`Inspect source ${index + 1} on map`} aria-pressed={selectedSource === index} onClick={() => { setSelectedSource(index); document.getElementById("source-inspector")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" }); }}>0{index + 1}</button><div><a href={source.url} target={source.url === "#" ? undefined : "_blank"} rel="noreferrer">{source.title}</a><p>{source.description}</p></div><span className="domain">{source.domain}</span></li>)}</ol>
       </>}
-      {panel === "recent" && <div className="discovery-list">{recent.length ? recent.map((item, index) => <button type="button" onClick={() => { setQuery(item.query); setRun(item); setPanel("brief"); }} key={`${item.query}-${index}`}><span>{item.query}</span><small>{item.sources.length} sources · {formatWhen(item.recordedAt)}</small></button>) : <p className="empty-state">Your recent seeds will gather here on this device.</p>}</div>}
+      {panel === "recent" && <div className="discovery-list">{recent.length ? recent.map((item, index) => <button type="button" onClick={() => { setQuery(item.query); setRun(item); setSelectedSource(null); setPanel("brief"); }} key={`${item.query}-${index}`}><span>{item.query}</span><small>{item.sources.length} sources · {formatWhen(item.recordedAt)}</small></button>) : <p className="empty-state">Your recent seeds will gather here on this device.</p>}</div>}
       {panel === "popular" && <div className="discovery-list">{popular.length ? popular.map((topic) => <button type="button" onClick={() => setQuery(topic.query)} key={topic.query}><span>{topic.query}</span><small>{topic.count} public grows · {formatWhen(topic.lastSeen)}</small></button>) : <p className="empty-state">Popular public topics will appear as gardens start growing.</p>}</div>}
     </section>
     <footer><span>fastCRW / Firecrawl → fresh web</span><span>Cloudflare Computer → agent memory</span><span>Vercel → garden window</span></footer>

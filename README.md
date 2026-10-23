@@ -11,6 +11,23 @@ A public research habitat: seed a question, get a concise reading guide, explore
 - One-click share links at `/s/<id>` for a research result.
 - Cloudflare Computer Durable Object storage for public gardens, history, shares, and topics.
 
+## Interactive source garden
+
+The home page's map supports up to six sources. Select a numbered leaf to
+inspect the source excerpt and open the original. The matching entry in the
+reading list is highlighted; its number also selects the leaf.
+
+Dashed lines connect sources with the same URL hostname (ignoring `www.`).
+The **Same-site links** control toggles these lines. They show shared origin,
+not agreement, contradiction, or source quality. Excerpts are not verified
+conclusions.
+
+Choose **Explore an example garden** to try all six leaves and three pairs of
+related sources without a crawler call. The example is labeled as illustrative
+and is not recorded as a live research run. Live search, saved gardens, and
+sharing retain their existing behavior; the interactive map is on the home page.
+The controls support keyboard navigation and respect reduced-motion settings.
+
 ## Local app
 
 ```powershell
